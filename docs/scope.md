@@ -15,6 +15,7 @@ Este alcance está alineado con:
 - **Resultado buscado:** crear proyecto -> generar web app -> preview -> iterar -> guardar historial básico.
 - **Principio guía:** simplicidad funcional demostrable de punta a punta sobre amplitud de features.
 - **Decisión tecnológica central:** la generación de código con IA se implementa mediante **SDK de v0** orquestado desde backend.
+- **Regla de frontera de fase:** en Delivery 1 se implementa confiabilidad mínima operativa (estados, reintento básico, validaciones mínimas); el hardening avanzado corresponde a Delivery 2.
 
 ---
 

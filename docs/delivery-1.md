@@ -16,6 +16,66 @@ Entregar un flujo funcional end-to-end en Android para **crear proyecto -> envia
 - Cada incremento cierra con: demo interna + checklist de aceptacion + pruebas minimas en verde.
 - No abrir siguiente incremento con bloqueadores criticos del anterior.
 
+## Trazabilidad y medicion D1 (REQ -> Incremento -> Prueba -> KPI)
+
+### Regla de cobertura
+
+- Esta matriz usa unicamente REQs existentes (`REQ-001` a `REQ-012`) definidos en `docs/product-requirements.md`.
+- El cierre de Delivery 1 se evalua con `REQ-001` a `REQ-011`.
+- `REQ-012` queda deferred y no bloquea salida de D1.
+
+### KPIs de referencia D1
+
+- `KPI-D1-01`: Activacion de valor (`>= 60%`).
+- `KPI-D1-02`: Tiempo mediano a primer preview (`<= 10 min`).
+- `KPI-D1-03`: Iteracion efectiva (`>= 35%`).
+- `KPI-D1-04`: Confiabilidad tecnica de generacion (`>= 90%`).
+- `KPI-D1-05`: Retencion de 7 dias (`>= 25%`).
+- `KPI-D1-06`: Integridad de persistencia (`>= 99%`).
+- `KPI-D1-07`: Duplicacion por reintento (`= 0%`).
+
+| REQ | Incremento D1.x | Prueba de aceptacion | KPI asociado |
+|---|---|---|---|
+| REQ-001 | D1.1 | Crear proyecto con titulo valido; persiste con ID y aparece en Home tras recarga/reapertura. | KPI-D1-01, KPI-D1-06 |
+| REQ-002 | D1.1 | Home lista proyectos desde backend y refleja altas sin mocks. | KPI-D1-01, KPI-D1-06 |
+| REQ-003 | D1.2 | Prompt inicial crea v1 con estado final `success/failed`. | KPI-D1-01, KPI-D1-04 |
+| REQ-004 | D1.2 | Backend invoca proveedor real y guarda metadatos/artefactos. | KPI-D1-04 |
+| REQ-005 | D1.3 | Preview renderiza contenido usable; error de carga tiene fallback accionable. | KPI-D1-02, KPI-D1-04 |
+| REQ-006 | D1.4 | Prompt de seguimiento crea version `N+1` en el mismo proyecto. | KPI-D1-03, KPI-D1-04 |
+| REQ-007 | D1.4 | Historial muestra numero/fecha/estado/prompt; recupera al menos 20 versiones. | KPI-D1-03, KPI-D1-06 |
+| REQ-008 | D1.4 | Mensajes persisten en orden y sin duplicados tras reabrir app. | KPI-D1-05, KPI-D1-06 |
+| REQ-009 | D1.2 + D1.5 | Estados correctos, doble envio bloqueado, error + reintento visible. | KPI-D1-04, KPI-D1-02 |
+| REQ-010 | D1.5 | Reintento tras `failed` crea nueva version sin duplicar proyecto. | KPI-D1-04, KPI-D1-07 |
+| REQ-011 | D1.1 + D1.5 | Validaciones bloquean envio invalido sin llamada backend. | KPI-D1-04, KPI-D1-07 |
+| REQ-012 | Deferred (D2) | Edicion de metadata post-creacion (fuera de gate D1). | No aplica a cierre D1 |
+
+### Criterio de cumplimiento de D1
+
+Delivery 1 se considera cumplido cuando:
+1. Todas las pruebas de aceptacion de `REQ-001` a `REQ-011` estan en verde.
+2. No hay bloqueadores abiertos en el flujo core (crear, generar, preview, iterar, historial).
+3. Se cumplen simultaneamente las metas KPI-D1-01 a KPI-D1-07 en la ventana acordada.
+
+## Contrato transversal D1 (sesion + idempotencia)
+
+Aplica a todos los incrementos D1.1-D1.5.
+
+### Identidad minima
+
+- Toda request app -> backend incluye `X-Session-Id` (UUIDv4 persistido localmente).
+- Sin `X-Session-Id` valido, backend responde `401 SESSION_REQUIRED`.
+
+### Idempotencia minima
+
+- Operaciones mutantes (`POST /projects`, `POST /projects/:id/prompts`) requieren `X-Idempotency-Key`.
+- Reintentos tecnicos deben reutilizar la misma key.
+- Reuso de key con payload distinto debe fallar con `409 IDEMPOTENCY_KEY_REUSED`.
+
+### Criterio de aceptacion transversal
+
+- [ ] No hay duplicados de proyecto/version por reconexion o doble tap.
+- [ ] Reintentos tecnicos preservan respuesta deterministica.
+
 ---
 
 ## D1.1 - Fundacion real de proyectos (Semana 1)
@@ -127,8 +187,9 @@ Entregar un flujo funcional end-to-end en Android para **crear proyecto -> envia
 
 ### Dependencias
 
-- Endpoint `GET /projects/:id/preview` (o entrega equivalente de `previewUrl`).
-- Version `success` con URL disponible y estable.
+- Endpoint canonico: `GET /projects/:id/preview?target=current|version&versionNumber=N`.
+- Fuente de preview: `ProjectVersion.previewUrl` de versiones `success`.
+- Errores esperados y manejados por UI: `PREVIEW_NOT_READY`, `PREVIEW_EXPIRED`, `PREVIEW_UNAVAILABLE`.
 - Politica de seguridad de carga web en Android (HTTPS).
 
 ---

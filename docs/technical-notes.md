@@ -52,6 +52,67 @@ Criterio: modelo pequeño, consistente y persistente antes de agregar entidades 
 - Idempotencia en operaciones sensibles a reintentos de red (al menos en creación y generación).
 - Observabilidad mínima: eventos de crear proyecto, generar versión, fallo de generación, abrir preview, reintento.
 
+## Cierre de ambiguedades tecnicas D1 (normativo)
+
+Esta sección define reglas obligatorias para Delivery 1. Si otro documento contradice estas reglas, prevalece esta sección.
+
+### Politica de `currentVersion` (invariante unico)
+
+- `Project.currentVersionId` puede ser `null` y referencia a `ProjectVersion.id`.
+- `currentVersionId` solo puede apuntar a una version `success` del mismo proyecto.
+- Las versiones `failed` no actualizan `currentVersionId`.
+- Al crear una version `success`, `currentVersionId` se actualiza en la misma transaccion.
+- `versionNumber` es incremental y unico por proyecto (`UNIQUE(projectId, versionNumber)`).
+
+Regla operativa: `currentVersion` significa "ultima version usable", no "ultimo intento".
+
+### Contrato canonico de preview
+
+Fuente de verdad:
+- La unica fuente valida de preview es `ProjectVersion.previewUrl` para versiones `success`.
+
+Endpoint canonico:
+- `GET /projects/:projectId/preview?target=current|version&versionNumber=<int opcional>`
+
+Errores canonicos minimos:
+- `404 PROJECT_NOT_FOUND`
+- `404 VERSION_NOT_FOUND`
+- `409 PREVIEW_NOT_READY`
+- `410 PREVIEW_EXPIRED`
+- `424 PREVIEW_UNAVAILABLE`
+- `400 INVALID_PREVIEW_QUERY`
+
+### Identidad/sesion minima D1
+
+- Todas las requests app -> backend incluyen `X-Session-Id` (UUIDv4).
+- `X-Session-Id` se genera en primera apertura y se persiste localmente.
+- Sin `X-Session-Id` valido, backend responde `401 SESSION_REQUIRED`.
+- No hay login de usuario en D1; identidad anonima por dispositivo.
+
+### Idempotencia y reintentos minimos
+
+Operaciones mutantes con idempotencia obligatoria:
+- `POST /projects`
+- `POST /projects/:projectId/prompts`
+
+Reglas:
+- App envia `X-Idempotency-Key` (UUIDv4) por accion de usuario.
+- Reintentos tecnicos reutilizan la misma key.
+- Misma key + mismo payload => misma respuesta (replay deterministico).
+- Misma key + payload distinto => `409 IDEMPOTENCY_KEY_REUSED`.
+- Reintentar solo en timeout o `408/429/5xx` con backoff corto.
+
+### Glosario canonico minimo
+
+- **Vercel v0**: proveedor externo de generacion, consumido solo por backend.
+- **Proyecto (`Project`)**: contenedor principal de iteraciones.
+- **Version (`ProjectVersion`)**: resultado de un intento de generacion.
+- **Version actual (`currentVersion`)**: ultima version `success` utilizable.
+- **Iteracion**: prompt nuevo sobre proyecto existente que crea `N+1`.
+- **Preview**: representacion accesible por `previewUrl` asociada a version `success`.
+- **Sesion D1**: identidad anonima minima por dispositivo (`X-Session-Id`).
+- **Idempotencia**: garantia de no duplicar efectos ante reintentos.
+
 ## Integración futura con Vercel v0 SDK (plan de evolución)
 
 ### Fase A - Sustitución de mocks por proveedor real
@@ -88,7 +149,7 @@ Decisión de criterio: no ocultar fallos técnicos; convertirlos en estados acci
 
 - Cada prompt de iteración genera una nueva `ProjectVersion` (`N+1`) en el mismo proyecto.
 - Una versión puede finalizar en `success` o `failed`; ambos resultados se guardan.
-- `currentVersion` del proyecto apunta a la última versión exitosa o, según política operativa, al último intento (definir consistentemente en backend y UI).
+- `currentVersion` del proyecto apunta siempre a la última versión exitosa (`success`).
 - El historial debe listar al menos número de versión, fecha, estado y prompt asociado.
 - Reintentar una generación fallida crea una nueva versión; no sobrescribe intentos previos.
 
