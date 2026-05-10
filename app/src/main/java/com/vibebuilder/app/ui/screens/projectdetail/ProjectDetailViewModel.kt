@@ -36,11 +36,14 @@ sealed interface ProjectDetailUiState {
 
 data class PromptInputState(
     val text: String = "",
-    val isSending: Boolean = false,
+    val sendStatus: PromptSendStatus = PromptSendStatus.Idle,
     val sendError: String? = null
 ) {
+    val isSending: Boolean get() = sendStatus == PromptSendStatus.Loading
     val canSend: Boolean get() = !isSending && text.isNotBlank()
 }
+
+enum class PromptSendStatus { Idle, Loading, Success, Failed }
 
 class ProjectDetailViewModel(
     private val projectId: String,
@@ -79,28 +82,43 @@ class ProjectDetailViewModel(
     val promptInput: StateFlow<PromptInputState> = _promptInput.asStateFlow()
 
     fun onPromptChange(value: String) {
-        _promptInput.update { it.copy(text = value, sendError = null) }
+        _promptInput.update {
+            it.copy(
+                text = value,
+                sendStatus = PromptSendStatus.Idle,
+                sendError = null
+            )
+        }
     }
 
     fun sendPrompt() {
         val current = _promptInput.value
         if (!current.canSend) return
         val text = current.text.trim()
-        _promptInput.update { it.copy(isSending = true, sendError = null) }
+        _promptInput.update {
+            it.copy(
+                sendStatus = PromptSendStatus.Loading,
+                sendError = null
+            )
+        }
         viewModelScope.launch {
             runCatching { repository.sendPrompt(projectId, text) }
                 .onSuccess {
-                    _promptInput.value = PromptInputState()
+                    _promptInput.value = PromptInputState(sendStatus = PromptSendStatus.Success)
                 }
                 .onFailure { error ->
                     _promptInput.update {
                         it.copy(
-                            isSending = false,
+                            sendStatus = PromptSendStatus.Failed,
                             sendError = error.message ?: "No se pudo enviar el prompt"
                         )
                     }
                 }
         }
+    }
+
+    fun retrySend() {
+        sendPrompt()
     }
 
     companion object {

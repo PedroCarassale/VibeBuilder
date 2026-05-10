@@ -1,0 +1,146 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createApp } from "../src/app.js";
+import { createDatabase } from "../src/db.js";
+
+const SESSION_A = "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";
+const SESSION_B = "c4ee8d66-0ec8-47fe-8e84-b4ed803f7253";
+
+async function startTestServer(dbPath) {
+  const db = createDatabase(dbPath);
+  const app = createApp({ db });
+
+  await new Promise((resolve) => app.listen(0, resolve));
+  const address = app.address();
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  return {
+    db,
+    baseUrl,
+    close: () => new Promise((resolve) => app.close(resolve))
+  };
+}
+
+async function createProject(baseUrl, sessionId, title = "Proyecto detalle") {
+  const response = await fetch(`${baseUrl}/projects`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-session-id": sessionId
+    },
+    body: JSON.stringify({ title })
+  });
+
+  assert.equal(response.status, 201);
+  return response.json();
+}
+
+test("GET /projects/:projectId/messages devuelve mensajes cronologicos", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-"));
+  const dbPath = path.join(tmpDir, "db.sqlite");
+  const server = await startTestServer(dbPath);
+
+  try {
+    const { projectId } = await createProject(server.baseUrl, SESSION_A);
+    server.db
+      .prepare(
+        `
+          INSERT INTO project_versions (id, project_id, version_number, prompt_snapshot, status, provider_meta, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?);
+        `
+      )
+      .run("version-1", projectId, 1, "Primer prompt", "success", "{}", "2026-01-01T10:00:00.000Z");
+
+    const insertMessage = server.db.prepare(
+      `
+        INSERT INTO prompt_messages (id, project_id, version_id, role, content, created_at)
+        VALUES (?, ?, ?, ?, ?, ?);
+      `
+    );
+    insertMessage.run(
+      "message-2",
+      projectId,
+      "version-1",
+      "assistant",
+      "Respuesta del asistente",
+      "2026-01-01T10:00:02.000Z"
+    );
+    insertMessage.run(
+      "message-1",
+      projectId,
+      "version-1",
+      "user",
+      "Primer prompt",
+      "2026-01-01T10:00:01.000Z"
+    );
+
+    const response = await fetch(`${server.baseUrl}/projects/${projectId}/messages`, {
+      headers: { "x-session-id": SESSION_A }
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.map((message) => message.id), ["message-1", "message-2"]);
+    assert.equal(body[0].versionNumber, 1);
+    assert.equal(body[1].role, "assistant");
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /projects/:projectId/versions devuelve historial ordenado por version", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-"));
+  const dbPath = path.join(tmpDir, "db.sqlite");
+  const server = await startTestServer(dbPath);
+
+  try {
+    const { projectId } = await createProject(server.baseUrl, SESSION_A);
+    const insertVersion = server.db.prepare(
+      `
+        INSERT INTO project_versions (id, project_id, version_number, prompt_snapshot, status, provider_meta, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+      `
+    );
+    insertVersion.run("version-1", projectId, 1, "Primer prompt", "success", "{}", "2026-01-01T10:00:00.000Z");
+    insertVersion.run("version-2", projectId, 2, "Segundo prompt", "failed", "{}", "2026-01-01T10:01:00.000Z");
+
+    const response = await fetch(`${server.baseUrl}/projects/${projectId}/versions`, {
+      headers: { "x-session-id": SESSION_A }
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.map((version) => version.versionNumber), [2, 1]);
+    assert.equal(body[0].status, "failed");
+    assert.equal(body[0].prompt, "Segundo prompt");
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET detalle responde 404 cuando el proyecto es de otra sesion", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-"));
+  const dbPath = path.join(tmpDir, "db.sqlite");
+  const server = await startTestServer(dbPath);
+
+  try {
+    const { projectId } = await createProject(server.baseUrl, SESSION_A);
+
+    const versionsResponse = await fetch(`${server.baseUrl}/projects/${projectId}/versions`, {
+      headers: { "x-session-id": SESSION_B }
+    });
+    const messagesResponse = await fetch(`${server.baseUrl}/projects/${projectId}/messages`, {
+      headers: { "x-session-id": SESSION_B }
+    });
+
+    assert.equal(versionsResponse.status, 404);
+    assert.equal(messagesResponse.status, 404);
+    assert.equal((await versionsResponse.json()).error.code, "PROJECT_NOT_FOUND");
+    assert.equal((await messagesResponse.json()).error.code, "PROJECT_NOT_FOUND");
+  } finally {
+    await server.close();
+  }
+});

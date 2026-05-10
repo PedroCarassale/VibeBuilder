@@ -1,6 +1,8 @@
 package com.vibebuilder.app.data.repository
 
 import com.vibebuilder.app.data.remote.ApiProject
+import com.vibebuilder.app.data.remote.ApiProjectVersion
+import com.vibebuilder.app.data.remote.ApiPromptMessage
 import com.vibebuilder.app.data.remote.VibeBuilderApi
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
@@ -16,12 +18,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
-import java.util.UUID
+import org.json.JSONObject
+import java.io.IOException
 
 /**
- * Repository híbrido para Delivery 1:
- * - Home usa datos reales de backend (`GET /projects`).
- * - Detalle/prompt mantiene comportamiento local para no romper el flujo actual.
+ * Repository para Delivery 1 conectado al backend real:
+ * - Home consume `GET /projects`.
+ * - Chat consume `POST /projects/:projectId/prompts`.
  */
 class RemoteProjectRepository(
     private val api: VibeBuilderApi
@@ -37,17 +40,19 @@ class RemoteProjectRepository(
         .map { list -> list.sortedByDescending { project -> project.updatedAt } }
 
     override fun observeProject(projectId: String): Flow<Project?> =
-        projectsState.asStateFlow().map { list -> list.firstOrNull { it.id == projectId } }
+        projectsState.asStateFlow()
+            .onStart { refreshFromBackend() }
+            .map { list -> list.firstOrNull { it.id == projectId } }
 
     override fun observeVersions(projectId: String): Flow<List<ProjectVersion>> =
-        versionsState.asStateFlow().map { map ->
-            map[projectId].orEmpty().sortedByDescending { it.versionNumber }
-        }
+        versionsState.asStateFlow()
+            .onStart { refreshProjectDetailFromBackend(projectId) }
+            .map { map -> map[projectId].orEmpty().sortedByDescending { it.versionNumber } }
 
     override fun observeMessages(projectId: String): Flow<List<PromptMessage>> =
-        messagesState.asStateFlow().map { map ->
-            map[projectId].orEmpty().sortedBy { it.createdAt }
-        }
+        messagesState.asStateFlow()
+            .onStart { refreshProjectDetailFromBackend(projectId) }
+            .map { map -> map[projectId].orEmpty().sortedBy { it.createdAt } }
 
     override suspend fun createProject(
         title: String,
@@ -68,42 +73,35 @@ class RemoteProjectRepository(
         )
 
         refreshFromBackend()
-        upsertProject(project)
-        project
+        projectsState.value.firstOrNull { it.id == projectId } ?: project
     }
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion =
         mutex.withLock {
-            val project = projectsState.value.firstOrNull { it.id == projectId }
-                ?: error("Project $projectId not found")
+            if (projectsState.value.none { it.id == projectId }) error("Project $projectId not found")
+            val normalizedPrompt = prompt.trim()
+            val response = api.sendPrompt(projectId = projectId, prompt = normalizedPrompt)
+            val newStatus = response.status.toDomainStatus()
+            refreshProjectDetailFromBackend(projectId)
+            refreshFromBackend()
 
-            val nextNumber = project.currentVersionNumber + 1
-            val now = Clock.System.now()
-
-            val newVersion = buildVersion(
-                projectId = projectId,
-                versionNumber = nextNumber,
-                prompt = prompt,
-                createdAt = now
-            )
-            versionsState.value = versionsState.value + (
-                projectId to (versionsState.value[projectId].orEmpty() + newVersion)
-            )
-
-            messagesState.value = messagesState.value + (
-                projectId to (
-                    messagesState.value[projectId].orEmpty() +
-                        userMessage(projectId, prompt, now) +
-                        assistantMessage(
-                            projectId = projectId,
-                            content = defaultAssistantReply(nextNumber),
-                            createdAt = now,
-                            versionNumber = nextNumber
-                        )
-                    )
+            val newVersion = versionsState.value[projectId]
+                .orEmpty()
+                .firstOrNull { version -> version.id == response.projectVersionId }
+                ?: ProjectVersion(
+                    id = response.projectVersionId,
+                    projectId = projectId,
+                    versionNumber = response.versionNumber,
+                    prompt = normalizedPrompt,
+                    previewHtml = previewPlaceholder(normalizedPrompt, response.versionNumber),
+                    previewUrl = null,
+                    createdAt = Clock.System.now(),
+                    status = newStatus
                 )
 
-            upsertProject(project.copy(updatedAt = now, currentVersionNumber = nextNumber))
+            if (newStatus == VersionStatus.FAILED) {
+                throw IOException(buildGenerationFailedMessage(response.providerMeta))
+            }
             newVersion
         }
 
@@ -121,6 +119,31 @@ class RemoteProjectRepository(
         projectsState.value = mergeRemoteWithLocal(remoteProjects)
     }
 
+    private suspend fun refreshProjectDetailFromBackend(projectId: String) {
+        val remoteVersions = api.getProjectVersions(projectId).map { it.toDomain() }
+        val remoteMessages = api.getProjectMessages(projectId).map { it.toDomain() }
+
+        versionsState.value = versionsState.value + (
+            projectId to dedupeById(remoteVersions, ProjectVersion::id)
+        )
+        messagesState.value = messagesState.value + (
+            projectId to dedupeById(remoteMessages, PromptMessage::id)
+        )
+
+        val currentVersionNumber = remoteVersions
+            .filter { it.status == VersionStatus.READY }
+            .maxOfOrNull { it.versionNumber }
+            ?: 0
+        projectsState.value.firstOrNull { it.id == projectId }?.let { existingProject ->
+            upsertProject(
+                existingProject.copy(
+                    currentVersionNumber = currentVersionNumber,
+                    updatedAt = maxOf(existingProject.updatedAt, remoteVersions.maxOfOrNull { it.createdAt } ?: existingProject.updatedAt)
+                )
+            )
+        }
+    }
+
     private fun mergeRemoteWithLocal(remoteProjects: List<Project>): List<Project> {
         val remoteById = remoteProjects.associateBy { it.id }
         val localOnly = projectsState.value.filter { local -> remoteById[local.id] == null }
@@ -132,6 +155,11 @@ class RemoteProjectRepository(
             add(project)
             addAll(projectsState.value.filterNot { it.id == project.id })
         }
+    }
+
+    private fun <T> dedupeById(items: List<T>, idSelector: (T) -> String): List<T> {
+        val seenIds = HashSet<String>()
+        return items.filter { item -> seenIds.add(idSelector(item)) }
     }
 
     private fun ApiProject.toDomain(currentVersionNumber: Int?): Project = Project(
@@ -146,54 +174,46 @@ class RemoteProjectRepository(
     private fun parseInstant(value: String): Instant =
         runCatching { Instant.parse(value) }.getOrElse { Clock.System.now() }
 
-    private fun buildVersion(
-        projectId: String,
-        versionNumber: Int,
-        prompt: String,
-        createdAt: Instant
-    ): ProjectVersion = ProjectVersion(
-        id = UUID.randomUUID().toString(),
-        projectId = projectId,
-        versionNumber = versionNumber,
-        prompt = prompt,
-        previewHtml = mockPreviewHtml(prompt, versionNumber),
-        previewUrl = null,
-        createdAt = createdAt,
-        status = VersionStatus.READY
-    )
-
-    private fun userMessage(
-        projectId: String,
-        content: String,
-        createdAt: Instant
-    ) = PromptMessage(
-        id = UUID.randomUUID().toString(),
-        projectId = projectId,
-        role = PromptMessage.Role.USER,
-        content = content,
-        createdAt = createdAt
-    )
-
-    private fun assistantMessage(
-        projectId: String,
-        content: String,
-        createdAt: Instant,
-        versionNumber: Int
-    ) = PromptMessage(
-        id = UUID.randomUUID().toString(),
-        projectId = projectId,
-        role = PromptMessage.Role.ASSISTANT,
-        content = content,
-        createdAt = createdAt,
-        versionNumber = versionNumber
-    )
-
-    private fun defaultAssistantReply(versionNumber: Int): String =
-        "Versión $versionNumber generada. Revisa el preview y envía un nuevo prompt para iterar."
-
-    private fun mockPreviewHtml(prompt: String, versionNumber: Int): String = """
+    private fun previewPlaceholder(prompt: String, versionNumber: Int): String = """
         <h1>Web app generada (v$versionNumber)</h1>
         <p><strong>Prompt:</strong> ${prompt.take(140)}</p>
         <p>Este es un placeholder. La integración real reemplazará este contenido por la web app generada por la IA.</p>
     """.trimIndent()
+
+    private fun String.toDomainStatus(): VersionStatus = when (lowercase()) {
+        "success" -> VersionStatus.READY
+        "failed" -> VersionStatus.FAILED
+        else -> throw IOException("Estado de generación inválido: $this")
+    }
+
+    private fun ApiProjectVersion.toDomain(): ProjectVersion = ProjectVersion(
+        id = id,
+        projectId = projectId,
+        versionNumber = versionNumber,
+        prompt = prompt,
+        previewHtml = previewPlaceholder(prompt, versionNumber),
+        previewUrl = previewUrl,
+        createdAt = parseInstant(createdAt),
+        status = status.toDomainStatus()
+    )
+
+    private fun ApiPromptMessage.toDomain(): PromptMessage = PromptMessage(
+        id = id,
+        projectId = projectId,
+        role = when (role.lowercase()) {
+            "user" -> PromptMessage.Role.USER
+            else -> PromptMessage.Role.ASSISTANT
+        },
+        content = content,
+        createdAt = parseInstant(createdAt),
+        versionNumber = versionNumber
+    )
+
+    private fun buildGenerationFailedMessage(providerMeta: JSONObject?): String {
+        val errorCode = providerMeta?.optString("errorCode")?.takeIf { it.isNotBlank() }
+        return when (errorCode) {
+            "PROVIDER_TIMEOUT" -> "La generación tardó demasiado. Reintenta."
+            else -> "La generación falló. Reintenta."
+        }
+    }
 }

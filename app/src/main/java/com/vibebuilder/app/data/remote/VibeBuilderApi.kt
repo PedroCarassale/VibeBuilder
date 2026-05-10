@@ -18,13 +18,44 @@ data class ApiProject(
     val updatedAt: String
 )
 
+data class ApiPromptResponse(
+    val promptMessageId: String,
+    val projectVersionId: String,
+    val versionNumber: Int,
+    val status: String,
+    val providerMeta: JSONObject?
+)
+
+data class ApiProjectVersion(
+    val id: String,
+    val projectId: String,
+    val versionNumber: Int,
+    val prompt: String,
+    val status: String,
+    val previewUrl: String?,
+    val createdAt: String
+)
+
+data class ApiPromptMessage(
+    val id: String,
+    val projectId: String,
+    val versionId: String?,
+    val role: String,
+    val content: String,
+    val createdAt: String,
+    val versionNumber: Int?
+)
+
 interface SessionIdProvider {
     fun getSessionId(): String
 }
 
 interface VibeBuilderApi {
     suspend fun getProjects(): List<ApiProject>
+    suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion>
+    suspend fun getProjectMessages(projectId: String): List<ApiPromptMessage>
     suspend fun createProject(title: String, description: String): String
+    suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse
 }
 
 class HttpVibeBuilderApi(
@@ -69,6 +100,80 @@ class HttpVibeBuilderApi(
         )
         val payload = JSONObject(response.body)
         payload.getString("projectId")
+    }
+
+    override suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion> = withContext(Dispatchers.IO) {
+        val response = request(
+            method = "GET",
+            path = "/projects/$projectId/versions"
+        )
+        val body = response.body.ifBlank { "[]" }
+        val jsonArray = JSONArray(body)
+        buildList {
+            for (index in 0 until jsonArray.length()) {
+                val item = jsonArray.getJSONObject(index)
+                add(
+                    ApiProjectVersion(
+                        id = item.getString("id"),
+                        projectId = item.getString("projectId"),
+                        versionNumber = item.getInt("versionNumber"),
+                        prompt = item.getString("prompt"),
+                        status = item.getString("status"),
+                        previewUrl = item.optStringOrNull("previewUrl"),
+                        createdAt = item.getString("createdAt")
+                    )
+                )
+            }
+        }
+    }
+
+    override suspend fun getProjectMessages(projectId: String): List<ApiPromptMessage> = withContext(Dispatchers.IO) {
+        val response = request(
+            method = "GET",
+            path = "/projects/$projectId/messages"
+        )
+        val body = response.body.ifBlank { "[]" }
+        val jsonArray = JSONArray(body)
+        buildList {
+            for (index in 0 until jsonArray.length()) {
+                val item = jsonArray.getJSONObject(index)
+                add(
+                    ApiPromptMessage(
+                        id = item.getString("id"),
+                        projectId = item.getString("projectId"),
+                        versionId = item.optStringOrNull("versionId"),
+                        role = item.getString("role"),
+                        content = item.getString("content"),
+                        createdAt = item.getString("createdAt"),
+                        versionNumber = if (item.has("versionNumber") && !item.isNull("versionNumber")) {
+                            item.getInt("versionNumber")
+                        } else {
+                            null
+                        }
+                    )
+                )
+            }
+        }
+    }
+
+    override suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse = withContext(Dispatchers.IO) {
+        val requestBody = JSONObject()
+            .put("prompt", prompt)
+            .toString()
+
+        val response = request(
+            method = "POST",
+            path = "/projects/$projectId/prompts",
+            body = requestBody
+        )
+        val payload = JSONObject(response.body)
+        ApiPromptResponse(
+            promptMessageId = payload.getString("promptMessageId"),
+            projectVersionId = payload.getString("projectVersionId"),
+            versionNumber = payload.getInt("versionNumber"),
+            status = payload.getString("status"),
+            providerMeta = payload.optJSONObject("providerMeta")
+        )
     }
 
     private fun request(

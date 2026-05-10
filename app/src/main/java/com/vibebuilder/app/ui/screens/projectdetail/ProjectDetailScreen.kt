@@ -90,7 +90,8 @@ fun ProjectDetailScreen(
                                 messages = current.data.messages,
                                 input = promptInput,
                                 onPromptChange = viewModel::onPromptChange,
-                                onSend = viewModel::sendPrompt
+                                onSend = viewModel::sendPrompt,
+                                onRetry = viewModel::retrySend
                             )
                             DetailTab.Preview -> PreviewTab(
                                 currentVersion = current.data.currentVersion

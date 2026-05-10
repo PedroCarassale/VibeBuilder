@@ -24,6 +24,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
@@ -38,7 +39,8 @@ fun PromptTab(
     messages: List<PromptMessage>,
     input: PromptInputState,
     onPromptChange: (String) -> Unit,
-    onSend: () -> Unit
+    onSend: () -> Unit,
+    onRetry: () -> Unit
 ) {
     val listState = rememberLazyListState()
 
@@ -61,12 +63,24 @@ fun PromptTab(
         }
 
         if (input.sendError != null) {
-            Text(
-                text = input.sendError,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = input.sendError,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+                TextButton(onClick = onRetry, enabled = input.canSend) {
+                    Text(stringResource(R.string.retry))
+                }
+            }
         }
 
         PromptInputBar(

@@ -11,8 +11,7 @@ import com.vibebuilder.app.domain.repository.ProjectRepository
  * Tiny manual DI container.
  *
  * Intentionally avoids Hilt/Koin in Delivery 1 to keep the project setup minimal.
- * Home consumes backend data via [RemoteProjectRepository], while details keep a
- * local fallback model until the remaining endpoints are implemented.
+ * Project list and prompt envío consume backend real via [RemoteProjectRepository].
  */
 object ServiceLocator {
 
