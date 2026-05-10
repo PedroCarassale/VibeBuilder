@@ -1,9 +1,14 @@
 package com.vibebuilder.app
 
 import android.app.Application
+import com.vibebuilder.app.di.ServiceLocator
 
 /**
- * Application class. Currently a thin wrapper; the in-memory repository lives inside
- * [com.vibebuilder.app.di.ServiceLocator] and is initialized lazily on first access.
+ * Application class responsible for bootstrapping lightweight app dependencies.
  */
-class VibeBuilderApp : Application()
+class VibeBuilderApp : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        ServiceLocator.initialize(this)
+    }
+}

@@ -52,8 +52,7 @@ class MockProjectRepository : ProjectRepository {
 
     override suspend fun createProject(
         title: String,
-        description: String,
-        initialPrompt: String
+        description: String
     ): Project = mutex.withLock {
         delay(SIMULATED_LATENCY_MS)
         val now = Clock.System.now()
@@ -64,19 +63,9 @@ class MockProjectRepository : ProjectRepository {
             description = description,
             createdAt = now,
             updatedAt = now,
-            currentVersionNumber = 1
+            currentVersionNumber = 0
         )
         projectsState.value = projectsState.value + project
-
-        val firstVersion = buildVersion(projectId, 1, initialPrompt, now)
-        versionsState.value = versionsState.value + (projectId to listOf(firstVersion))
-
-        messagesState.value = messagesState.value + (
-            projectId to listOf(
-                userMessage(projectId, initialPrompt, now),
-                assistantMessage(projectId, defaultAssistantReply(1), now, versionNumber = 1)
-            )
-        )
         project
     }
 

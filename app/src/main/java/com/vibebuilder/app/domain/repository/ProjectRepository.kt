@@ -24,8 +24,7 @@ interface ProjectRepository {
 
     suspend fun createProject(
         title: String,
-        description: String,
-        initialPrompt: String
+        description: String
     ): Project
 
     suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion

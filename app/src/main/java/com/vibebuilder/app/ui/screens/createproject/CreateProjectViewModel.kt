@@ -14,15 +14,13 @@ import kotlinx.coroutines.launch
 data class CreateProjectFormState(
     val title: String = "",
     val description: String = "",
-    val initialPrompt: String = "",
     val titleError: String? = null,
-    val promptError: String? = null,
     val isSubmitting: Boolean = false,
     val submitError: String? = null,
     val createdProjectId: String? = null
 ) {
     val canSubmit: Boolean
-        get() = !isSubmitting && title.isNotBlank() && initialPrompt.isNotBlank()
+        get() = !isSubmitting && title.isNotBlank()
 }
 
 class CreateProjectViewModel(
@@ -40,16 +38,11 @@ class CreateProjectViewModel(
         _state.update { it.copy(description = value, submitError = null) }
     }
 
-    fun onPromptChange(value: String) {
-        _state.update { it.copy(initialPrompt = value, promptError = null, submitError = null) }
-    }
-
     fun submit() {
         val current = _state.value
         val titleError = if (current.title.isBlank()) "El nombre es requerido" else null
-        val promptError = if (current.initialPrompt.isBlank()) "El prompt es requerido" else null
-        if (titleError != null || promptError != null) {
-            _state.update { it.copy(titleError = titleError, promptError = promptError) }
+        if (titleError != null) {
+            _state.update { it.copy(titleError = titleError) }
             return
         }
 
@@ -58,8 +51,7 @@ class CreateProjectViewModel(
             runCatching {
                 repository.createProject(
                     title = current.title.trim(),
-                    description = current.description.trim(),
-                    initialPrompt = current.initialPrompt.trim()
+                    description = current.description.trim()
                 )
             }.onSuccess { project ->
                 _state.update {

@@ -65,7 +65,10 @@ fun ProjectListScreen(
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (val current = state) {
                 ProjectListUiState.Loading -> LoadingView()
-                is ProjectListUiState.Error -> ErrorView(message = current.message)
+                is ProjectListUiState.Error -> ErrorView(
+                    message = current.message,
+                    onRetry = viewModel::retry
+                )
                 is ProjectListUiState.Content -> {
                     if (current.projects.isEmpty()) {
                         EmptyView(

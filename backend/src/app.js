@@ -17,6 +17,16 @@ const INVALID_JSON_ERROR = {
 const UUID_V4_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+function getValidSessionId(request, response) {
+  const sessionId = request.headers[SESSION_ID_HEADER];
+  if (typeof sessionId !== "string" || !UUID_V4_REGEX.test(sessionId)) {
+    sendJson(response, 401, { error: SESSION_REQUIRED_ERROR });
+    return null;
+  }
+
+  return sessionId;
+}
+
 function sendJson(response, statusCode, body) {
   response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(body));
@@ -63,11 +73,8 @@ function createProjectHandler(db) {
   `);
 
   return async function handleCreateProject(request, response) {
-    const sessionId = request.headers[SESSION_ID_HEADER];
-    if (typeof sessionId !== "string" || !UUID_V4_REGEX.test(sessionId)) {
-      sendJson(response, 401, { error: SESSION_REQUIRED_ERROR });
-      return;
-    }
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
 
     let body;
     try {
@@ -99,12 +106,50 @@ function createProjectHandler(db) {
   };
 }
 
+function createListProjectsHandler(db) {
+  const listProjectsStatement = db.prepare(`
+    SELECT
+      id,
+      title,
+      description,
+      current_version_id,
+      created_at,
+      updated_at
+    FROM projects
+    WHERE session_id = ?
+    ORDER BY updated_at DESC;
+  `);
+
+  return function handleListProjects(request, response) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    const rows = listProjectsStatement.all(sessionId);
+    const projects = rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      description: row.description,
+      currentVersionId: row.current_version_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }));
+
+    sendJson(response, 200, projects);
+  };
+}
+
 export function createApp({ db }) {
   const handleCreateProject = createProjectHandler(db);
+  const handleListProjects = createListProjectsHandler(db);
 
   return createServer(async (request, response) => {
     if (request.method === "POST" && request.url === "/projects") {
       await handleCreateProject(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && request.url === "/projects") {
+      handleListProjects(request, response);
       return;
     }
 

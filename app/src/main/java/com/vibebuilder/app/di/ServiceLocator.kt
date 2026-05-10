@@ -1,16 +1,36 @@
 package com.vibebuilder.app.di
 
-import com.vibebuilder.app.data.repository.MockProjectRepository
+import android.content.Context
+import com.vibebuilder.app.BuildConfig
+import com.vibebuilder.app.data.remote.HttpVibeBuilderApi
+import com.vibebuilder.app.data.remote.SharedPrefsSessionIdProvider
+import com.vibebuilder.app.data.repository.RemoteProjectRepository
 import com.vibebuilder.app.domain.repository.ProjectRepository
 
 /**
  * Tiny manual DI container.
  *
  * Intentionally avoids Hilt/Koin in Delivery 1 to keep the project setup minimal.
- * When the real backend lands, swap [projectRepository] for `RemoteProjectRepository(api)`
- * here (or behind a build flag) — no UI code needs to change.
+ * Home consumes backend data via [RemoteProjectRepository], while details keep a
+ * local fallback model until the remaining endpoints are implemented.
  */
 object ServiceLocator {
 
-    val projectRepository: ProjectRepository by lazy { MockProjectRepository() }
+    private lateinit var appContext: Context
+
+    fun initialize(context: Context) {
+        appContext = context.applicationContext
+    }
+
+    val projectRepository: ProjectRepository by lazy {
+        check(::appContext.isInitialized) {
+            "ServiceLocator must be initialized from Application.onCreate()"
+        }
+        val sessionIdProvider = SharedPrefsSessionIdProvider(appContext)
+        val api = HttpVibeBuilderApi(
+            baseUrl = BuildConfig.API_BASE_URL,
+            sessionIdProvider = sessionIdProvider
+        )
+        RemoteProjectRepository(api)
+    }
 }

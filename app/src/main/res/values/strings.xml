@@ -14,7 +14,7 @@
     <string name="create_project_description_label">Descripción corta (opcional)</string>
     <string name="create_project_initial_prompt_label">Prompt inicial</string>
     <string name="create_project_initial_prompt_placeholder">Ej: Crea una landing para un gimnasio con planes y formulario de contacto</string>
-    <string name="create_project_submit">Generar primera versión</string>
+    <string name="create_project_submit">Crear proyecto</string>
     <string name="create_project_name_required">El nombre es requerido</string>
     <string name="create_project_prompt_required">El prompt inicial es requerido</string>
 
