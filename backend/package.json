@@ -8,6 +8,7 @@
     "test": "node --test ./test/**/*.test.js"
   },
   "dependencies": {
+    "dotenv": "^17.4.2",
     "v0-sdk": "^0.16.4"
   }
 }
