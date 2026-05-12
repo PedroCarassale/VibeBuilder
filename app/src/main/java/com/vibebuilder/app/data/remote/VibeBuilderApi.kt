@@ -27,13 +27,26 @@ data class ApiPromptResponse(
 )
 
 data class ApiProjectVersion(
-    val id: String,
-    val projectId: String,
+    val id: String? = null,
+    val projectId: String? = null,
     val versionNumber: Int,
-    val prompt: String,
+    val promptSnapshot: String,
     val status: String,
-    val previewUrl: String?,
+    val previewUrl: String? = null,
     val createdAt: String
+)
+
+enum class ApiPreviewTarget(val value: String) {
+    CURRENT("current"),
+    VERSION("version")
+}
+
+data class ApiProjectPreview(
+    val projectId: String,
+    val target: String,
+    val versionId: String?,
+    val versionNumber: Int?,
+    val previewUrl: String
 )
 
 data class ApiPromptMessage(
@@ -53,10 +66,21 @@ interface SessionIdProvider {
 interface VibeBuilderApi {
     suspend fun getProjects(): List<ApiProject>
     suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion>
+    suspend fun getProjectPreview(
+        projectId: String,
+        target: ApiPreviewTarget = ApiPreviewTarget.CURRENT,
+        versionNumber: Int? = null
+    ): ApiProjectPreview
     suspend fun getProjectMessages(projectId: String): List<ApiPromptMessage>
     suspend fun createProject(title: String, description: String): String
     suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse
 }
+
+class ApiRequestException(
+    val statusCode: Int,
+    val errorCode: String?,
+    message: String
+) : IOException(message)
 
 class HttpVibeBuilderApi(
     private val baseUrl: String,
@@ -114,10 +138,12 @@ class HttpVibeBuilderApi(
                 val item = jsonArray.getJSONObject(index)
                 add(
                     ApiProjectVersion(
-                        id = item.getString("id"),
-                        projectId = item.getString("projectId"),
+                        id = item.optStringOrNull("id"),
+                        projectId = item.optStringOrNull("projectId"),
                         versionNumber = item.getInt("versionNumber"),
-                        prompt = item.getString("prompt"),
+                        promptSnapshot = item.optStringOrNull("promptSnapshot")
+                            ?: item.optStringOrNull("prompt")
+                            ?: "",
                         status = item.getString("status"),
                         previewUrl = item.optStringOrNull("previewUrl"),
                         createdAt = item.getString("createdAt")
@@ -154,6 +180,34 @@ class HttpVibeBuilderApi(
                 )
             }
         }
+    }
+
+    override suspend fun getProjectPreview(
+        projectId: String,
+        target: ApiPreviewTarget,
+        versionNumber: Int?
+    ): ApiProjectPreview = withContext(Dispatchers.IO) {
+        val query = buildString {
+            append("?target=${target.value}")
+            if (target == ApiPreviewTarget.VERSION) {
+                require(versionNumber != null && versionNumber > 0) {
+                    "versionNumber debe ser > 0 cuando target=version"
+                }
+                append("&versionNumber=$versionNumber")
+            }
+        }
+        val response = request(
+            method = "GET",
+            path = "/projects/$projectId/preview$query"
+        )
+        val payload = JSONObject(response.body)
+        ApiProjectPreview(
+            projectId = payload.getString("projectId"),
+            target = payload.getString("target"),
+            versionId = payload.optStringOrNull("versionId"),
+            versionNumber = payload.optIntOrNull("versionNumber"),
+            previewUrl = payload.getString("previewUrl")
+        )
     }
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse = withContext(Dispatchers.IO) {
@@ -203,7 +257,7 @@ class HttpVibeBuilderApi(
             val stream = if (statusCode in 200..299) connection.inputStream else connection.errorStream
             val responseBody = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (statusCode !in 200..299) {
-                throw IOException(parseErrorMessage(responseBody, statusCode))
+                throw parseError(responseBody, statusCode)
             }
             HttpResponse(statusCode = statusCode, body = responseBody)
         } finally {
@@ -211,14 +265,24 @@ class HttpVibeBuilderApi(
         }
     }
 
-    private fun parseErrorMessage(responseBody: String, statusCode: Int): String {
-        if (responseBody.isBlank()) {
-            return "Error de red ($statusCode)"
-        }
-        return runCatching {
+    private fun parseError(responseBody: String, statusCode: Int): ApiRequestException {
+        if (responseBody.isBlank()) return ApiRequestException(
+            statusCode = statusCode,
+            errorCode = null,
+            message = "Error de red ($statusCode)"
+        )
+        val payload = runCatching {
             val error = JSONObject(responseBody).optJSONObject("error")
-            error?.optString("message")?.takeIf { it.isNotBlank() }
-        }.getOrNull() ?: "Error de red ($statusCode)"
+            val code = error?.optString("code")?.takeIf { it.isNotBlank() }
+            val message = error?.optString("message")?.takeIf { it.isNotBlank() }
+                ?: "Error de red ($statusCode)"
+            code to message
+        }.getOrNull()
+        return ApiRequestException(
+            statusCode = statusCode,
+            errorCode = payload?.first,
+            message = payload?.second ?: "Error de red ($statusCode)"
+        )
     }
 
     private data class HttpResponse(
@@ -228,4 +292,7 @@ class HttpVibeBuilderApi(
 }
 
 private fun JSONObject.optStringOrNull(key: String): String? =
-    if (!has(key) || isNull(key)) null else optString(key, null)
+    if (!has(key) || isNull(key)) null else optString(key)
+
+private fun JSONObject.optIntOrNull(key: String): Int? =
+    if (!has(key) || isNull(key)) null else getInt(key)

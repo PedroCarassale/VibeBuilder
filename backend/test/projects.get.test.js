@@ -8,6 +8,12 @@ import { createDatabase } from "../src/db.js";
 
 const SESSION_A = "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";
 const SESSION_B = "c4ee8d66-0ec8-47fe-8e84-b4ed803f7253";
+let idempotencySequence = 0;
+
+function createIdempotencyKey() {
+  idempotencySequence += 1;
+  return `idem-projects-get-${idempotencySequence}`;
+}
 
 async function startTestServer(dbPath) {
   const db = createDatabase(dbPath);
@@ -29,7 +35,8 @@ async function createProject(baseUrl, sessionId, title, description = null) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-session-id": sessionId
+      "x-session-id": sessionId,
+      "x-idempotency-key": createIdempotencyKey()
     },
     body: JSON.stringify({ title, description })
   });

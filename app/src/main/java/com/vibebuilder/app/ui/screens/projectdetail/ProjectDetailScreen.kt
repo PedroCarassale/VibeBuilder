@@ -1,5 +1,8 @@
 package com.vibebuilder.app.ui.screens.projectdetail
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -15,12 +18,14 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -41,8 +46,28 @@ fun ProjectDetailScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val promptInput by viewModel.promptInput.collectAsStateWithLifecycle()
+    val previewExternalState by viewModel.previewExternalState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+
+    LaunchedEffect(previewExternalState.urlToOpen) {
+        val url = previewExternalState.urlToOpen ?: return@LaunchedEffect
+        runCatching {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        }.onSuccess {
+            viewModel.onPreviewUrlHandled()
+        }.onFailure { error ->
+            if (error is ActivityNotFoundException) {
+                viewModel.onPreviewOpenFailedNoBrowser()
+            } else {
+                viewModel.onPreviewOpenFailedUnknown(error.message)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -85,20 +110,28 @@ fun ProjectDetailScreen(
                             }
                         }
 
-                        when (DetailTab.entries[selectedTab]) {
-                            DetailTab.Prompt -> PromptTab(
-                                messages = current.data.messages,
-                                input = promptInput,
-                                onPromptChange = viewModel::onPromptChange,
-                                onSend = viewModel::sendPrompt,
-                                onRetry = viewModel::retrySend
-                            )
-                            DetailTab.Preview -> PreviewTab(
-                                currentVersion = current.data.currentVersion
-                            )
-                            DetailTab.History -> HistoryTab(
-                                versions = current.data.versions
-                            )
+                        Box(modifier = Modifier.weight(1f)) {
+                            when (DetailTab.entries[selectedTab]) {
+                                DetailTab.Prompt -> PromptTab(
+                                    messages = current.data.messages,
+                                    input = promptInput,
+                                    onPromptChange = viewModel::onPromptChange,
+                                    onSend = viewModel::sendPrompt,
+                                    onRetry = viewModel::retrySend
+                                )
+                                DetailTab.Preview -> PreviewTab(
+                                    currentVersion = current.data.currentVersion,
+                                    isOpeningExternal = previewExternalState.isResolving,
+                                    externalError = previewExternalState.error,
+                                    externalErrorMessage = previewExternalState.errorMessage,
+                                    onOpenInBrowser = { viewModel.openPreviewInBrowser(current.data.currentVersion) },
+                                    onDismissExternalFeedback = viewModel::clearPreviewFeedback
+                                )
+                                DetailTab.History -> HistoryTab(
+                                    versions = current.data.versions,
+                                    errorMessage = current.data.historyError
+                                )
+                            }
                         }
                     }
                 }

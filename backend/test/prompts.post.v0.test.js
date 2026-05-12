@@ -8,6 +8,12 @@ import { createDatabase } from "../src/db.js";
 import { createV0Provider } from "../src/generation-provider.js";
 
 const SESSION_ID = "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";
+let idempotencySequence = 0;
+
+function createIdempotencyKey() {
+  idempotencySequence += 1;
+  return `idem-prompts-v0-${idempotencySequence}`;
+}
 
 async function startTestServer(dbPath, options = {}) {
   const db = createDatabase(dbPath);
@@ -32,7 +38,8 @@ async function createProject(baseUrl) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-session-id": SESSION_ID
+      "x-session-id": SESSION_ID,
+      "x-idempotency-key": createIdempotencyKey()
     },
     body: JSON.stringify({ title: "Proyecto v0 real" })
   });
@@ -88,7 +95,8 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-session-id": SESSION_ID
+        "x-session-id": SESSION_ID,
+        "x-idempotency-key": createIdempotencyKey()
       },
       body: JSON.stringify({ prompt: "Genera un dashboard" })
     });
@@ -120,6 +128,90 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
   }
 });
 
+test("POST /projects/:id/prompts de seguimiento reutiliza el mismo chat de v0", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-v0-"));
+  const dbPath = path.join(tmpDir, "db.sqlite");
+  const createCalls = [];
+  const sendMessageCalls = [];
+
+  const fakeClient = {
+    chats: {
+      create: async ({ message }) => {
+        createCalls.push({ message });
+        return {
+          id: "chat-real-1",
+          object: "chat",
+          latestVersion: {
+            id: "version-real-1",
+            object: "version",
+            status: "completed",
+            demoUrl: "https://preview.v0.dev/real-1"
+          },
+          modelConfiguration: { modelId: "v0-1.5-md" }
+        };
+      },
+      sendMessage: async ({ chatId, message }) => {
+        sendMessageCalls.push({ chatId, message });
+        return {
+          id: chatId,
+          object: "chat",
+          latestVersion: {
+            id: "version-real-2",
+            object: "version",
+            status: "completed",
+            demoUrl: "https://preview.v0.dev/real-2"
+          },
+          modelConfiguration: { modelId: "v0-1.5-md" }
+        };
+      }
+    }
+  };
+
+  const provider = createV0Provider({ client: fakeClient });
+  const server = await startTestServer(dbPath, { generationProvider: provider });
+
+  try {
+    const { projectId } = await createProject(server.baseUrl);
+
+    const firstResponse = await fetch(`${server.baseUrl}/projects/${projectId}/prompts`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-session-id": SESSION_ID,
+        "x-idempotency-key": createIdempotencyKey()
+      },
+      body: JSON.stringify({ prompt: "Genera una landing" })
+    });
+    assert.equal(firstResponse.status, 201);
+    const firstBody = await firstResponse.json();
+
+    const secondResponse = await fetch(`${server.baseUrl}/projects/${projectId}/prompts`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-session-id": SESSION_ID,
+        "x-idempotency-key": createIdempotencyKey()
+      },
+      body: JSON.stringify({ prompt: "Agrega una seccion de precios" })
+    });
+    assert.equal(secondResponse.status, 201);
+    const secondBody = await secondResponse.json();
+
+    assert.equal(createCalls.length, 1);
+    assert.deepEqual(createCalls[0], { message: "Genera una landing" });
+    assert.equal(sendMessageCalls.length, 1);
+    assert.deepEqual(sendMessageCalls[0], {
+      chatId: "chat-real-1",
+      message: "Agrega una seccion de precios"
+    });
+    assert.equal(firstBody.providerMeta.requestId, "chat-real-1");
+    assert.equal(secondBody.providerMeta.requestId, "chat-real-1");
+    assert.equal(secondBody.providerMeta.previewUrl, "https://preview.v0.dev/real-2");
+  } finally {
+    await server.close();
+  }
+});
+
 test("POST /projects/:id/prompts mapea error 401 de v0 a PROVIDER_UNAUTHORIZED no retryable", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-v0-"));
   const dbPath = path.join(tmpDir, "db.sqlite");
@@ -141,7 +233,8 @@ test("POST /projects/:id/prompts mapea error 401 de v0 a PROVIDER_UNAUTHORIZED n
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-session-id": SESSION_ID
+        "x-session-id": SESSION_ID,
+        "x-idempotency-key": createIdempotencyKey()
       },
       body: JSON.stringify({ prompt: "x" })
     });
@@ -192,7 +285,8 @@ test("POST /projects/:id/prompts mapea error 429 de v0 a PROVIDER_RATE_LIMITED r
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-session-id": SESSION_ID
+        "x-session-id": SESSION_ID,
+        "x-idempotency-key": createIdempotencyKey()
       },
       body: JSON.stringify({ prompt: "x" })
     });
@@ -229,7 +323,8 @@ test("POST /projects/:id/prompts marca timeout cuando v0 cuelga", async () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-session-id": SESSION_ID
+        "x-session-id": SESSION_ID,
+        "x-idempotency-key": createIdempotencyKey()
       },
       body: JSON.stringify({ prompt: "muy lento" })
     });

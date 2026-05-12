@@ -27,11 +27,24 @@
     <string name="prompt_send_cd">Enviar prompt</string>
     <string name="preview_placeholder_title">Vista previa</string>
     <string name="preview_placeholder_subtitle">Aquí se mostrará la web app generada (placeholder).</string>
+    <string name="preview_not_ready">La preview estará disponible cuando la generación termine con éxito.</string>
+    <string name="preview_url_unavailable">No hay URL de preview disponible para esta versión.</string>
+    <string name="preview_load_failed">No se pudo cargar la preview. Verifica la URL o tu conexión y vuelve a intentar.</string>
+    <string name="preview_help_text">Puedes volver al chat en cualquier momento para seguir iterando sin perder el contexto del proyecto.</string>
+    <string name="preview_open_in_browser">Abrir en navegador</string>
+    <string name="preview_opening_browser">Abriendo navegador…</string>
+    <string name="preview_external_expired">La URL de preview venció. Genera una nueva versión para abrirla.</string>
+    <string name="preview_external_unavailable">La preview no está disponible para esta versión.</string>
+    <string name="preview_external_no_browser">No se encontró una app de navegador para abrir la preview.</string>
+    <string name="preview_external_unknown">No se pudo abrir la preview en el navegador.</string>
     <string name="history_empty">Aún no hay versiones para este proyecto.</string>
+    <string name="history_latest_success">Última success</string>
+    <string name="history_status_format">Estado: %1$s</string>
 
     <!-- Common -->
     <string name="back_cd">Volver</string>
     <string name="loading">Cargando…</string>
     <string name="generic_error">Algo salió mal. Intenta nuevamente.</string>
     <string name="retry">Reintentar</string>
+    <string name="dismiss">Cerrar</string>
 </resources>

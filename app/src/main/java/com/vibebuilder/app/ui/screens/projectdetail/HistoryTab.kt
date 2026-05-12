@@ -22,11 +22,21 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.vibebuilder.app.R
 import com.vibebuilder.app.domain.model.ProjectVersion
+import com.vibebuilder.app.domain.model.VersionStatus
+import com.vibebuilder.app.ui.components.ErrorView
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 
 @Composable
-fun HistoryTab(versions: List<ProjectVersion>) {
+fun HistoryTab(
+    versions: List<ProjectVersion>,
+    errorMessage: String?
+) {
+    if (!errorMessage.isNullOrBlank()) {
+        ErrorView(message = errorMessage)
+        return
+    }
+
     if (versions.isEmpty()) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Text(
@@ -43,15 +53,24 @@ fun HistoryTab(versions: List<ProjectVersion>) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        val latestSuccessVersionNumber = versions
+            .filter { it.status == VersionStatus.READY }
+            .maxOfOrNull { it.versionNumber }
         items(items = versions, key = { it.id }) { version ->
-            VersionCard(version)
+            VersionCard(
+                version = version,
+                isLatestSuccess = version.versionNumber == latestSuccessVersionNumber
+            )
         }
         item { Spacer(Modifier.height(24.dp)) }
     }
 }
 
 @Composable
-private fun VersionCard(version: ProjectVersion) {
+private fun VersionCard(
+    version: ProjectVersion,
+    isLatestSuccess: Boolean
+) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -63,6 +82,20 @@ private fun VersionCard(version: ProjectVersion) {
                 text = "Versión ${version.versionNumber}",
                 style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = if (isLatestSuccess) {
+                    stringResource(R.string.history_latest_success)
+                } else {
+                    stringResource(R.string.history_status_format, statusLabel(version.status))
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = if (isLatestSuccess) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
             Spacer(Modifier.height(4.dp))
             Text(
@@ -87,4 +120,10 @@ private fun formatTimestamp(version: ProjectVersion): String {
     val hour = local.hour.toString().padStart(2, '0')
     val minute = local.minute.toString().padStart(2, '0')
     return "$day/$month/${local.year} $hour:$minute"
+}
+
+private fun statusLabel(status: VersionStatus): String = when (status) {
+    VersionStatus.READY -> "success"
+    VersionStatus.FAILED -> "failed"
+    VersionStatus.GENERATING -> "generating"
 }

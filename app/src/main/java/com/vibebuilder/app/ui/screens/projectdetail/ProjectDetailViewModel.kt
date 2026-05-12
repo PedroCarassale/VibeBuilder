@@ -9,6 +9,8 @@ import com.vibebuilder.app.di.ServiceLocator
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
+import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
+import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import com.vibebuilder.app.domain.repository.ProjectRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -23,6 +26,7 @@ import kotlinx.coroutines.launch
 data class ProjectDetailUiData(
     val project: Project,
     val versions: List<ProjectVersion>,
+    val historyError: String?,
     val messages: List<PromptMessage>,
     val currentVersion: ProjectVersion?
 )
@@ -45,26 +49,68 @@ data class PromptInputState(
 
 enum class PromptSendStatus { Idle, Loading, Success, Failed }
 
+data class PreviewExternalUiState(
+    val isResolving: Boolean = false,
+    val urlToOpen: String? = null,
+    val error: PreviewExternalError? = null,
+    val errorMessage: String? = null
+)
+
+enum class PreviewExternalError {
+    NotReady,
+    Expired,
+    Unavailable,
+    NoBrowser,
+    Unknown
+}
+
 class ProjectDetailViewModel(
     private val projectId: String,
     private val repository: ProjectRepository
 ) : ViewModel() {
 
+    private val versionsState: StateFlow<HistoryVersionsState> =
+        repository.observeVersions(projectId)
+            .map { versions ->
+                HistoryVersionsState(
+                    versions = versions,
+                    errorMessage = null
+                )
+            }
+            .catch {
+                emit(HistoryVersionsState(errorMessage = it.message ?: "No se pudo cargar el historial"))
+            }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = HistoryVersionsState()
+            )
+
+    private val messagesState: StateFlow<List<PromptMessage>> =
+        repository.observeMessages(projectId)
+            .catch { emit(emptyList()) }
+            .stateIn(
+                scope = viewModelScope,
+                started = SharingStarted.WhileSubscribed(5_000),
+                initialValue = emptyList()
+            )
+
     val uiState: StateFlow<ProjectDetailUiState> = combine(
         repository.observeProject(projectId),
-        repository.observeVersions(projectId),
-        repository.observeMessages(projectId)
-    ) { project, versions, messages ->
+        versionsState,
+        messagesState
+    ) { project, historyState, messages ->
         if (project == null) {
             ProjectDetailUiState.NotFound(projectId)
         } else {
-            val currentVersion = versions.firstOrNull {
+            val currentVersion = historyState.versions.firstOrNull {
                 it.versionNumber == project.currentVersionNumber
             }
             ProjectDetailUiState.Content(
                 ProjectDetailUiData(
                     project = project,
-                    versions = versions,
+                    versions = historyState.versions,
+                    historyError = historyState.errorMessage,
                     messages = messages,
                     currentVersion = currentVersion
                 )
@@ -80,6 +126,9 @@ class ProjectDetailViewModel(
 
     private val _promptInput = MutableStateFlow(PromptInputState())
     val promptInput: StateFlow<PromptInputState> = _promptInput.asStateFlow()
+
+    private val _previewExternalState = MutableStateFlow(PreviewExternalUiState())
+    val previewExternalState: StateFlow<PreviewExternalUiState> = _previewExternalState.asStateFlow()
 
     fun onPromptChange(value: String) {
         _promptInput.update {
@@ -121,6 +170,84 @@ class ProjectDetailViewModel(
         sendPrompt()
     }
 
+    fun openPreviewInBrowser(currentVersion: ProjectVersion?) {
+        if (_previewExternalState.value.isResolving) return
+        _previewExternalState.update {
+            it.copy(
+                isResolving = true,
+                urlToOpen = null,
+                error = null,
+                errorMessage = null
+            )
+        }
+        viewModelScope.launch {
+            when (val previewResolution = repository.resolvePreviewUrl(projectId, currentVersion)) {
+                is PreviewUrlResolution.Available -> {
+                    _previewExternalState.update {
+                        it.copy(
+                            isResolving = false,
+                            urlToOpen = previewResolution.url
+                        )
+                    }
+                }
+
+                is PreviewUrlResolution.Unavailable -> {
+                    _previewExternalState.update {
+                        it.copy(
+                            isResolving = false,
+                            error = mapPreviewError(previewResolution.reason),
+                            errorMessage = previewResolution.message
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun onPreviewUrlHandled() {
+        _previewExternalState.update {
+            if (it.urlToOpen == null) it else it.copy(urlToOpen = null)
+        }
+    }
+
+    fun onPreviewOpenFailedNoBrowser() {
+        _previewExternalState.update {
+            it.copy(
+                isResolving = false,
+                urlToOpen = null,
+                error = PreviewExternalError.NoBrowser,
+                errorMessage = null
+            )
+        }
+    }
+
+    fun onPreviewOpenFailedUnknown(message: String?) {
+        _previewExternalState.update {
+            it.copy(
+                isResolving = false,
+                urlToOpen = null,
+                error = PreviewExternalError.Unknown,
+                errorMessage = message
+            )
+        }
+    }
+
+    fun clearPreviewFeedback() {
+        _previewExternalState.update {
+            it.copy(
+                error = null,
+                errorMessage = null
+            )
+        }
+    }
+
+    private fun mapPreviewError(reason: PreviewUnavailableReason): PreviewExternalError = when (reason) {
+        PreviewUnavailableReason.NotReady -> PreviewExternalError.NotReady
+        PreviewUnavailableReason.Expired -> PreviewExternalError.Expired
+        PreviewUnavailableReason.Unavailable -> PreviewExternalError.Unavailable
+        PreviewUnavailableReason.Unknown -> PreviewExternalError.Unknown
+    }
+
     companion object {
         fun factory(projectId: String): ViewModelProvider.Factory = viewModelFactory {
             initializer {
@@ -132,3 +259,8 @@ class ProjectDetailViewModel(
         }
     }
 }
+
+data class HistoryVersionsState(
+    val versions: List<ProjectVersion> = emptyList(),
+    val errorMessage: String? = null
+)

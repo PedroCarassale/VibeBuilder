@@ -4,6 +4,8 @@ import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
 import com.vibebuilder.app.domain.model.VersionStatus
+import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
+import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import com.vibebuilder.app.domain.repository.ProjectRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -111,6 +113,18 @@ class MockProjectRepository : ProjectRepository {
         val project = projectsState.value.firstOrNull { it.id == projectId } ?: return null
         return versionsState.value[projectId]
             ?.firstOrNull { it.versionNumber == project.currentVersionNumber }
+    }
+
+    override suspend fun resolvePreviewUrl(
+        projectId: String,
+        currentVersion: ProjectVersion?
+    ): PreviewUrlResolution {
+        val localUrl = currentVersion?.previewUrl?.trim()
+        return if (!localUrl.isNullOrBlank()) {
+            PreviewUrlResolution.Available(localUrl)
+        } else {
+            PreviewUrlResolution.Unavailable(PreviewUnavailableReason.NotReady)
+        }
     }
 
     private fun buildVersion(

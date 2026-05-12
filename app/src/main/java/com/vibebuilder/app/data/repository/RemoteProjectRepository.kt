@@ -1,13 +1,17 @@
 package com.vibebuilder.app.data.repository
 
+import com.vibebuilder.app.data.remote.ApiPreviewTarget
 import com.vibebuilder.app.data.remote.ApiProject
 import com.vibebuilder.app.data.remote.ApiProjectVersion
 import com.vibebuilder.app.data.remote.ApiPromptMessage
+import com.vibebuilder.app.data.remote.ApiRequestException
 import com.vibebuilder.app.data.remote.VibeBuilderApi
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
 import com.vibebuilder.app.domain.model.VersionStatus
+import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
+import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import com.vibebuilder.app.domain.repository.ProjectRepository
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,6 +24,7 @@ import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URI
 
 /**
  * Repository para Delivery 1 conectado al backend real:
@@ -111,6 +116,54 @@ class RemoteProjectRepository(
             ?.firstOrNull { it.versionNumber == project.currentVersionNumber }
     }
 
+    override suspend fun resolvePreviewUrl(
+        projectId: String,
+        currentVersion: ProjectVersion?
+    ): PreviewUrlResolution {
+        val localPreviewUrl = currentVersion?.previewUrl
+            ?.trim()
+            ?.takeIf(::isSupportedPreviewUrl)
+        if (localPreviewUrl != null) {
+            return PreviewUrlResolution.Available(localPreviewUrl)
+        }
+
+        return try {
+            val previewResponse = if (currentVersion?.versionNumber != null && currentVersion.versionNumber > 0) {
+                api.getProjectPreview(
+                    projectId = projectId,
+                    target = ApiPreviewTarget.VERSION,
+                    versionNumber = currentVersion.versionNumber
+                )
+            } else {
+                api.getProjectPreview(
+                    projectId = projectId,
+                    target = ApiPreviewTarget.CURRENT
+                )
+            }
+            val remoteUrl = previewResponse.previewUrl.trim()
+            if (isSupportedPreviewUrl(remoteUrl)) {
+                PreviewUrlResolution.Available(remoteUrl)
+            } else {
+                PreviewUrlResolution.Unavailable(
+                    reason = PreviewUnavailableReason.Unavailable,
+                    message = "La URL de preview recibida no es válida."
+                )
+            }
+        } catch (error: ApiRequestException) {
+            when (error.errorCode) {
+                "PREVIEW_NOT_READY" -> PreviewUrlResolution.Unavailable(PreviewUnavailableReason.NotReady, error.message)
+                "PREVIEW_EXPIRED" -> PreviewUrlResolution.Unavailable(PreviewUnavailableReason.Expired, error.message)
+                "PREVIEW_UNAVAILABLE" -> PreviewUrlResolution.Unavailable(PreviewUnavailableReason.Unavailable, error.message)
+                else -> PreviewUrlResolution.Unavailable(PreviewUnavailableReason.Unknown, error.message)
+            }
+        } catch (error: IOException) {
+            PreviewUrlResolution.Unavailable(
+                reason = PreviewUnavailableReason.Unknown,
+                message = error.message
+            )
+        }
+    }
+
     private suspend fun refreshFromBackend() {
         val remoteProjects = api.getProjects().map { apiProject ->
             val localProject = projectsState.value.firstOrNull { project -> project.id == apiProject.id }
@@ -183,15 +236,16 @@ class RemoteProjectRepository(
     private fun String.toDomainStatus(): VersionStatus = when (lowercase()) {
         "success" -> VersionStatus.READY
         "failed" -> VersionStatus.FAILED
+        "generating" -> VersionStatus.GENERATING
         else -> throw IOException("Estado de generación inválido: $this")
     }
 
     private fun ApiProjectVersion.toDomain(): ProjectVersion = ProjectVersion(
-        id = id,
-        projectId = projectId,
+        id = id ?: "${projectId ?: "unknown-project"}-v$versionNumber",
+        projectId = projectId.orEmpty(),
         versionNumber = versionNumber,
-        prompt = prompt,
-        previewHtml = previewPlaceholder(prompt, versionNumber),
+        prompt = promptSnapshot,
+        previewHtml = previewPlaceholder(promptSnapshot, versionNumber),
         previewUrl = previewUrl,
         createdAt = parseInstant(createdAt),
         status = status.toDomainStatus()
@@ -215,5 +269,14 @@ class RemoteProjectRepository(
             "PROVIDER_TIMEOUT" -> "La generación tardó demasiado. Reintenta."
             else -> "La generación falló. Reintenta."
         }
+    }
+
+    private fun isSupportedPreviewUrl(previewUrl: String): Boolean {
+        if (previewUrl.isBlank()) return false
+        return runCatching {
+            val parsed = URI(previewUrl)
+            val scheme = parsed.scheme?.lowercase()
+            (scheme == "https" || scheme == "http") && !parsed.host.isNullOrBlank()
+        }.getOrDefault(false)
     }
 }

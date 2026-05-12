@@ -30,4 +30,24 @@ interface ProjectRepository {
     suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion
 
     suspend fun getCurrentVersion(projectId: String): ProjectVersion?
+
+    suspend fun resolvePreviewUrl(
+        projectId: String,
+        currentVersion: ProjectVersion?
+    ): PreviewUrlResolution
+}
+
+sealed interface PreviewUrlResolution {
+    data class Available(val url: String) : PreviewUrlResolution
+    data class Unavailable(
+        val reason: PreviewUnavailableReason,
+        val message: String? = null
+    ) : PreviewUrlResolution
+}
+
+enum class PreviewUnavailableReason {
+    NotReady,
+    Expired,
+    Unavailable,
+    Unknown
 }

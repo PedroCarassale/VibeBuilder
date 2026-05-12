@@ -217,7 +217,7 @@ export function createV0Provider({
 
   return {
     name: "v0",
-    async generate({ prompt, signal }) {
+    async generate({ prompt, chatId = null, signal }) {
       let v0Client;
       try {
         v0Client = await ensureClient();
@@ -237,8 +237,12 @@ export function createV0Provider({
 
       const startedAt = Date.now();
       try {
+        const request =
+          typeof chatId === "string" && chatId.trim().length > 0
+            ? sendV0Message(v0Client, chatId.trim(), message)
+            : createV0Chat(v0Client, message);
         const result = await raceWithAbort(
-          Promise.resolve().then(() => v0Client.chats.create({ message })),
+          request,
           signal
         );
         const elapsedMs = Date.now() - startedAt;
@@ -253,6 +257,21 @@ export function createV0Provider({
       }
     }
   };
+}
+
+function createV0Chat(v0Client, message) {
+  return Promise.resolve().then(() => v0Client.chats.create({ message }));
+}
+
+function sendV0Message(v0Client, chatId, message) {
+  if (typeof v0Client.chats.sendMessage !== "function") {
+    throw new V0ProviderError({
+      message: "v0 client is missing chats.sendMessage().",
+      retryable: false
+    });
+  }
+
+  return Promise.resolve().then(() => v0Client.chats.sendMessage({ chatId, message }));
 }
 
 export async function generateWithTimeout({ provider, payload, timeoutMs }) {

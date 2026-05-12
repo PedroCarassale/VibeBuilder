@@ -1,15 +1,21 @@
 package com.vibebuilder.app.data.repository
 
 import com.vibebuilder.app.data.remote.ApiProject
+import com.vibebuilder.app.data.remote.ApiProjectPreview
+import com.vibebuilder.app.data.remote.ApiPreviewTarget
 import com.vibebuilder.app.data.remote.ApiProjectVersion
 import com.vibebuilder.app.data.remote.ApiPromptMessage
 import com.vibebuilder.app.data.remote.ApiPromptResponse
+import com.vibebuilder.app.data.remote.ApiRequestException
 import com.vibebuilder.app.data.remote.VibeBuilderApi
+import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
+import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -30,6 +36,66 @@ class RemoteProjectRepositoryTest {
         assertTrue(firstLoad[0].createdAt <= firstLoad[1].createdAt)
     }
 
+    @Test
+    fun resolvePreviewUrl_usaUrlLocal_siEsValida() = runTest {
+        val api = FakeVibeBuilderApi()
+        val repository = RemoteProjectRepository(api)
+        val currentVersion = repository.observeVersions(PROJECT_ID).first().first()
+            .copy(previewUrl = "https://preview.v0.dev/local-ready")
+
+        val resolution = repository.resolvePreviewUrl(PROJECT_ID, currentVersion)
+
+        assertEquals(0, api.previewRequests)
+        assertEquals(
+            PreviewUrlResolution.Available("https://preview.v0.dev/local-ready"),
+            resolution
+        )
+    }
+
+    @Test
+    fun resolvePreviewUrl_haceFallbackEndpoint_siNoHayUrlLocal() = runTest {
+        val api = FakeVibeBuilderApi().apply {
+            forcedPreviewUrl = "https://preview.v0.dev/from-endpoint"
+        }
+        val repository = RemoteProjectRepository(api)
+        val currentVersion = repository.observeVersions(PROJECT_ID).first().first()
+
+        val resolution = repository.resolvePreviewUrl(PROJECT_ID, currentVersion)
+
+        assertEquals(1, api.previewRequests)
+        assertEquals(
+            PreviewUrlResolution.Available("https://preview.v0.dev/from-endpoint"),
+            resolution
+        )
+    }
+
+    @Test
+    fun resolvePreviewUrl_mapeaErroresPreviewConMotivo() = runTest {
+        val api = FakeVibeBuilderApi()
+        val repository = RemoteProjectRepository(api)
+        val currentVersion = repository.observeVersions(PROJECT_ID).first().first()
+
+        api.nextPreviewError = ApiRequestException(409, "PREVIEW_NOT_READY", "not-ready")
+        val notReady = repository.resolvePreviewUrl(PROJECT_ID, currentVersion)
+
+        api.nextPreviewError = ApiRequestException(410, "PREVIEW_EXPIRED", "expired")
+        val expired = repository.resolvePreviewUrl(PROJECT_ID, currentVersion)
+
+        api.nextPreviewError = ApiRequestException(424, "PREVIEW_UNAVAILABLE", "unavailable")
+        val unavailable = repository.resolvePreviewUrl(PROJECT_ID, currentVersion)
+
+        val notReadyResult = notReady as PreviewUrlResolution.Unavailable
+        val expiredResult = expired as PreviewUrlResolution.Unavailable
+        val unavailableResult = unavailable as PreviewUrlResolution.Unavailable
+
+        assertEquals(PreviewUnavailableReason.NotReady, notReadyResult.reason)
+        assertEquals("not-ready", notReadyResult.message)
+        assertEquals(PreviewUnavailableReason.Expired, expiredResult.reason)
+        assertEquals("expired", expiredResult.message)
+        assertEquals(PreviewUnavailableReason.Unavailable, unavailableResult.reason)
+        assertEquals("unavailable", unavailableResult.message)
+    }
+
     companion object {
         private const val PROJECT_ID = "project-1"
     }
@@ -37,6 +103,9 @@ class RemoteProjectRepositoryTest {
 
 private class FakeVibeBuilderApi : VibeBuilderApi {
     private var versionCounter = 2
+    var previewRequests: Int = 0
+    var nextPreviewError: ApiRequestException? = null
+    var forcedPreviewUrl: String? = null
 
     private val projects = mutableListOf(
         ApiProject(
@@ -55,7 +124,7 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
                 id = "v-2",
                 projectId = "project-1",
                 versionNumber = 2,
-                prompt = "Segundo prompt",
+                promptSnapshot = "Segundo prompt",
                 status = "success",
                 previewUrl = null,
                 createdAt = "2026-01-01T10:00:00.000Z"
@@ -64,7 +133,7 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
                 id = "v-1",
                 projectId = "project-1",
                 versionNumber = 1,
-                prompt = "Primer prompt",
+                promptSnapshot = "Primer prompt",
                 status = "success",
                 previewUrl = null,
                 createdAt = "2026-01-01T09:30:00.000Z"
@@ -112,6 +181,33 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
     override suspend fun getProjectMessages(projectId: String): List<ApiPromptMessage> =
         messages[projectId].orEmpty().toList()
 
+    override suspend fun getProjectPreview(
+        projectId: String,
+        target: ApiPreviewTarget,
+        versionNumber: Int?
+    ): ApiProjectPreview {
+        previewRequests += 1
+        nextPreviewError?.let { error ->
+            nextPreviewError = null
+            throw error
+        }
+        val candidate = when (target) {
+            ApiPreviewTarget.CURRENT -> versions[projectId].orEmpty().firstOrNull()
+            ApiPreviewTarget.VERSION -> versions[projectId].orEmpty()
+                .firstOrNull { it.versionNumber == versionNumber }
+        } ?: error("Version no encontrada")
+
+        return ApiProjectPreview(
+            projectId = projectId,
+            target = target.value,
+            versionId = candidate.id,
+            versionNumber = candidate.versionNumber,
+            previewUrl = forcedPreviewUrl
+                ?: candidate.previewUrl
+                ?: "https://preview.v0.dev/mock-$projectId-${candidate.versionNumber}"
+        )
+    }
+
     override suspend fun createProject(title: String, description: String): String {
         val id = "project-${projects.size + 1}"
         projects += ApiProject(
@@ -136,7 +232,7 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
                 id = versionId,
                 projectId = projectId,
                 versionNumber = versionCounter,
-                prompt = prompt,
+                promptSnapshot = prompt,
                 status = "success",
                 previewUrl = null,
                 createdAt = createdAt

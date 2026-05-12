@@ -4,6 +4,7 @@ import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
 import com.vibebuilder.app.domain.model.VersionStatus
+import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import com.vibebuilder.app.domain.repository.ProjectRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -174,4 +175,11 @@ private class DetailFakeRepository : ProjectRepository {
     }
 
     override suspend fun getCurrentVersion(projectId: String): ProjectVersion? = null
+
+    override suspend fun resolvePreviewUrl(
+        projectId: String,
+        currentVersion: ProjectVersion?
+    ): PreviewUrlResolution = PreviewUrlResolution.Unavailable(
+        reason = com.vibebuilder.app.domain.repository.PreviewUnavailableReason.NotReady
+    )
 }

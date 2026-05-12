@@ -8,6 +8,12 @@ import { createDatabase } from "../src/db.js";
 
 const SESSION_A = "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";
 const SESSION_B = "c4ee8d66-0ec8-47fe-8e84-b4ed803f7253";
+let idempotencySequence = 0;
+
+function createIdempotencyKey() {
+  idempotencySequence += 1;
+  return `idem-project-detail-${idempotencySequence}`;
+}
 
 async function startTestServer(dbPath) {
   const db = createDatabase(dbPath);
@@ -29,7 +35,8 @@ async function createProject(baseUrl, sessionId, title = "Proyecto detalle") {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-session-id": sessionId
+      "x-session-id": sessionId,
+      "x-idempotency-key": createIdempotencyKey()
     },
     body: JSON.stringify({ title })
   });
@@ -91,7 +98,7 @@ test("GET /projects/:projectId/messages devuelve mensajes cronologicos", async (
   }
 });
 
-test("GET /projects/:projectId/versions devuelve historial ordenado por version", async () => {
+test("GET /projects/:projectId/versions devuelve payload final y orden consistente", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-"));
   const dbPath = path.join(tmpDir, "db.sqlite");
   const server = await startTestServer(dbPath);
@@ -115,7 +122,65 @@ test("GET /projects/:projectId/versions devuelve historial ordenado por version"
     const body = await response.json();
     assert.deepEqual(body.map((version) => version.versionNumber), [2, 1]);
     assert.equal(body[0].status, "failed");
-    assert.equal(body[0].prompt, "Segundo prompt");
+    assert.equal(body[0].promptSnapshot, "Segundo prompt");
+    assert.equal(body[0].createdAt, "2026-01-01T10:01:00.000Z");
+    assert.deepEqual(Object.keys(body[0]).sort(), [
+      "createdAt",
+      "promptSnapshot",
+      "status",
+      "versionNumber"
+    ]);
+
+    const secondResponse = await fetch(`${server.baseUrl}/projects/${projectId}/versions`, {
+      headers: { "x-session-id": SESSION_A }
+    });
+    assert.equal(secondResponse.status, 200);
+    const secondBody = await secondResponse.json();
+    assert.deepEqual(secondBody, body);
+  } finally {
+    await server.close();
+  }
+});
+
+test("GET /projects/:projectId/versions limita a ultimas 20 versiones", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-"));
+  const dbPath = path.join(tmpDir, "db.sqlite");
+  const server = await startTestServer(dbPath);
+
+  try {
+    const { projectId } = await createProject(server.baseUrl, SESSION_A);
+    const insertVersion = server.db.prepare(
+      `
+        INSERT INTO project_versions (id, project_id, version_number, prompt_snapshot, status, provider_meta, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+      `
+    );
+
+    for (let versionNumber = 1; versionNumber <= 25; versionNumber += 1) {
+      insertVersion.run(
+        `version-${versionNumber}`,
+        projectId,
+        versionNumber,
+        `Prompt ${versionNumber}`,
+        versionNumber % 2 === 0 ? "success" : "failed",
+        "{}",
+        `2026-01-01T10:${String(versionNumber).padStart(2, "0")}:00.000Z`
+      );
+    }
+
+    const response = await fetch(`${server.baseUrl}/projects/${projectId}/versions`, {
+      headers: { "x-session-id": SESSION_A }
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.length, 20);
+    assert.deepEqual(
+      body.map((version) => version.versionNumber),
+      Array.from({ length: 20 }, (_, index) => 25 - index)
+    );
+    assert.equal(body[0].promptSnapshot, "Prompt 25");
+    assert.equal(body[19].promptSnapshot, "Prompt 6");
   } finally {
     await server.close();
   }

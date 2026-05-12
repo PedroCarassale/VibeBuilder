@@ -7,15 +7,21 @@ import {
   generateWithTimeout
 } from "../src/generation-provider.js";
 
-function buildFakeClient(behavior) {
+function buildFakeClient(behavior, sendMessageBehavior = behavior) {
   const calls = [];
+  const sendMessageCalls = [];
   const create = async (params) => {
     calls.push(params);
     return behavior(params);
   };
+  const sendMessage = async (params) => {
+    sendMessageCalls.push(params);
+    return sendMessageBehavior(params);
+  };
   return {
     calls,
-    client: { chats: { create } }
+    sendMessageCalls,
+    client: { chats: { create, sendMessage } }
   };
 }
 
@@ -52,6 +58,39 @@ test("createV0Provider expone name 'v0' y delega en chats.create", async () => {
   assert.equal(result.providerMeta.promptLength, "Crea una landing".length);
   assert.equal(typeof result.providerMeta.latencyMs, "number");
   assert.ok(result.providerMeta.latencyMs >= 0);
+});
+
+test("createV0Provider delega en chats.sendMessage cuando recibe chatId", async () => {
+  const fake = buildFakeClient(
+    async () => {
+      throw new Error("No deberia crear un chat nuevo");
+    },
+    async () => ({
+      id: "chat-123",
+      object: "chat",
+      latestVersion: {
+        id: "version-2",
+        object: "version",
+        status: "completed",
+        demoUrl: "https://preview.v0.dev/iterated"
+      }
+    })
+  );
+
+  const provider = createV0Provider({ client: fake.client });
+  const result = await provider.generate({
+    prompt: "Agrega checkout",
+    chatId: "chat-123"
+  });
+
+  assert.equal(fake.calls.length, 0);
+  assert.equal(fake.sendMessageCalls.length, 1);
+  assert.deepEqual(fake.sendMessageCalls[0], {
+    chatId: "chat-123",
+    message: "Agrega checkout"
+  });
+  assert.equal(result.providerMeta.requestId, "chat-123");
+  assert.equal(result.providerMeta.previewUrl, "https://preview.v0.dev/iterated");
 });
 
 test("createV0Provider sin apiKey ni client lanza error explicito", () => {

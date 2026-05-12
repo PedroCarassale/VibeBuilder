@@ -3,6 +3,7 @@ package com.vibebuilder.app.ui.screens.projectlist
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
+import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import com.vibebuilder.app.domain.repository.ProjectRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -103,5 +104,11 @@ private class RetryableRepository : ProjectRepository {
         throw NotImplementedError("No requerido para esta prueba")
 
     override suspend fun getCurrentVersion(projectId: String): ProjectVersion? =
+        throw NotImplementedError("No requerido para esta prueba")
+
+    override suspend fun resolvePreviewUrl(
+        projectId: String,
+        currentVersion: ProjectVersion?
+    ): PreviewUrlResolution =
         throw NotImplementedError("No requerido para esta prueba")
 }
