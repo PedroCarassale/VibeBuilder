@@ -4,6 +4,7 @@ import {
   ProviderTimeoutError,
   V0ProviderError,
   createV0Provider,
+  extractV0AssistantText,
   generateWithTimeout
 } from "../src/generation-provider.js";
 
@@ -58,6 +59,7 @@ test("createV0Provider expone name 'v0' y delega en chats.create", async () => {
   assert.equal(result.providerMeta.promptLength, "Crea una landing".length);
   assert.equal(typeof result.providerMeta.latencyMs, "number");
   assert.ok(result.providerMeta.latencyMs >= 0);
+  assert.equal(result.assistantText, "");
 });
 
 test("createV0Provider delega en chats.sendMessage cuando recibe chatId", async () => {
@@ -91,6 +93,30 @@ test("createV0Provider delega en chats.sendMessage cuando recibe chatId", async 
   });
   assert.equal(result.providerMeta.requestId, "chat-123");
   assert.equal(result.providerMeta.previewUrl, "https://preview.v0.dev/iterated");
+  assert.equal(result.assistantText, "");
+});
+
+test("extractV0AssistantText toma el ultimo mensaje assistant tipo message", () => {
+  assert.equal(
+    extractV0AssistantText({
+      messages: [
+        { role: "user", type: "message", content: "hola" },
+        { role: "assistant", type: "message", content: "primera" },
+        { role: "assistant", type: "message", content: "ultima" }
+      ]
+    }),
+    "ultima"
+  );
+});
+
+test("extractV0AssistantText ignora type distinto de message y usa text", () => {
+  assert.equal(
+    extractV0AssistantText({
+      messages: [{ role: "assistant", type: "refinement", content: "x" }],
+      text: "  desde text  "
+    }),
+    "desde text"
+  );
 });
 
 test("createV0Provider sin apiKey ni client lanza error explicito", () => {

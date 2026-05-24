@@ -25,12 +25,53 @@
     <string name="prompt_input_placeholder">Escribe una instrucción para iterar sobre la app…</string>
     <string name="prompt_send">Enviar prompt</string>
     <string name="prompt_send_cd">Enviar prompt</string>
+    <string name="prompt_assistant_label">Builder</string>
+    <string name="prompt_user_label">Tú</string>
+    <string name="prompt_version_format">Versión %1$d</string>
+    <string name="prompt_assistant_app_ready">Tu app ya está lista.</string>
+    <string name="prompt_assistant_app_ready_subtitle">Ábrela en el navegador para verla a pantalla completa y compartirla.</string>
+    <string name="prompt_thinking_cd">Generando respuesta</string>
+
+    <string-array name="prompt_thinking_verbs">
+        <item>Pensando</item>
+        <item>Procesando</item>
+        <item>Calculando</item>
+        <item>Construyendo</item>
+        <item>Creando</item>
+        <item>Generando</item>
+        <item>Descifrando</item>
+        <item>Ideando</item>
+        <item>Imaginando</item>
+        <item>Improvisando</item>
+        <item>Componiendo</item>
+        <item>Considerando</item>
+        <item>Contemplando</item>
+        <item>Deliberando</item>
+        <item>Determinando</item>
+        <item>Elaborando</item>
+        <item>Cocinando</item>
+        <item>Preparando</item>
+        <item>Orquestando</item>
+        <item>Sintetizando</item>
+        <item>Reflexionando</item>
+        <item>Analizando</item>
+        <item>Resolviendo</item>
+        <item>Reordenando</item>
+        <item>Recomponiendo</item>
+        <item>Forjando</item>
+        <item>Diseñando</item>
+        <item>Visualizando</item>
+        <item>Tramando</item>
+        <item>VibeBuildeando</item>
+    </string-array>
     <string name="preview_placeholder_title">Vista previa</string>
     <string name="preview_placeholder_subtitle">Aquí se mostrará la web app generada (placeholder).</string>
     <string name="preview_not_ready">La preview estará disponible cuando la generación termine con éxito.</string>
     <string name="preview_url_unavailable">No hay URL de preview disponible para esta versión.</string>
     <string name="preview_load_failed">No se pudo cargar la preview. Verifica la URL o tu conexión y vuelve a intentar.</string>
     <string name="preview_help_text">Puedes volver al chat en cualquier momento para seguir iterando sin perder el contexto del proyecto.</string>
+    <string name="preview_qr_title">Abrir en otro dispositivo</string>
+    <string name="preview_qr_content_description">Código QR con la URL de la preview</string>
     <string name="preview_open_in_browser">Abrir en navegador</string>
     <string name="preview_opening_browser">Abriendo navegador…</string>
     <string name="preview_external_expired">La URL de preview venció. Genera una nueva versión para abrirla.</string>
@@ -40,6 +81,25 @@
     <string name="history_empty">Aún no hay versiones para este proyecto.</string>
     <string name="history_latest_success">Última success</string>
     <string name="history_status_format">Estado: %1$s</string>
+
+    <!-- v0 integration -->
+    <string name="v0_settings_title">Integración v0</string>
+    <string name="v0_settings_intro">La Platform API de v0 usa una API key que creas en tu cuenta (no se sustituye solo por iniciar sesión en Vercel). Puedes usar la key del servidor (V0_API_KEY) o guardar la tuya en este dispositivo: solo el backend la ve, cifrada.</string>
+    <string name="v0_settings_open_keys_page">Abrir v0 → Ajustes → API keys</string>
+    <string name="v0_settings_status_block">V0_API_KEY en el servidor: %1$s\nGuardado por sesión en servidor: %2$s\nKey propia (esta sesión): %3$s</string>
+    <string name="v0_settings_yes">sí</string>
+    <string name="v0_settings_no">no</string>
+    <string name="v0_settings_session_active_masked">sí (detalle oculto)</string>
+    <string name="v0_settings_api_key_label">API key de v0</string>
+    <string name="v0_settings_api_key_placeholder">vcp_…</string>
+    <string name="v0_settings_show">Mostrar</string>
+    <string name="v0_settings_hide">Ocultar</string>
+    <string name="v0_settings_save">Guardar en el servidor</string>
+    <string name="v0_settings_test_field">Probar conexión (texto del campo)</string>
+    <string name="v0_settings_test_saved">Probar conexión (key guardada)</string>
+    <string name="v0_settings_clear">Eliminar key guardada</string>
+    <string name="v0_settings_footer_note">Nunca pongas la API key en variables NEXT_PUBLIC ni en código del cliente web. Aquí va por HTTPS al backend y no se devuelve en JSON.</string>
+    <string name="project_list_settings_cd">Ajustes de integración v0</string>
 
     <!-- Common -->
     <string name="back_cd">Volver</string>

@@ -19,8 +19,7 @@ async function startTestServer(dbPath, options = {}) {
   const db = createDatabase(dbPath);
   const app = createApp({
     db,
-    generationProvider: options.generationProvider,
-    generationTimeoutMs: options.generationTimeoutMs
+    generationProvider: options.generationProvider
   });
 
   await new Promise((resolve) => app.listen(0, resolve));
@@ -79,7 +78,16 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
             status: "completed",
             demoUrl: "https://preview.v0.dev/real-1"
           },
-          modelConfiguration: { modelId: "v0-1.5-md" }
+          modelConfiguration: { modelId: "v0-1.5-md" },
+          messages: [
+            { role: "user", type: "message", content: "Genera un dashboard" },
+            {
+              role: "assistant",
+              type: "message",
+              content: "Listo, generé el dashboard."
+            }
+          ],
+          text: ""
         };
       }
     }
@@ -123,6 +131,14 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
     assert.deepEqual(persistedMeta, body.providerMeta);
     assert.equal("apiKey" in persistedMeta, false);
     assert.equal("token" in persistedMeta, false);
+
+    const assistantMsg = server.db
+      .prepare(
+        "SELECT content FROM prompt_messages WHERE project_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 1"
+      )
+      .get(projectId);
+    assert.ok(assistantMsg);
+    assert.equal(assistantMsg.content, "Listo, generé el dashboard.");
   } finally {
     await server.close();
   }
@@ -147,7 +163,10 @@ test("POST /projects/:id/prompts de seguimiento reutiliza el mismo chat de v0", 
             status: "completed",
             demoUrl: "https://preview.v0.dev/real-1"
           },
-          modelConfiguration: { modelId: "v0-1.5-md" }
+          modelConfiguration: { modelId: "v0-1.5-md" },
+          messages: [
+            { role: "assistant", type: "message", content: "Primera versión lista." }
+          ]
         };
       },
       sendMessage: async ({ chatId, message }) => {
@@ -161,7 +180,10 @@ test("POST /projects/:id/prompts de seguimiento reutiliza el mismo chat de v0", 
             status: "completed",
             demoUrl: "https://preview.v0.dev/real-2"
           },
-          modelConfiguration: { modelId: "v0-1.5-md" }
+          modelConfiguration: { modelId: "v0-1.5-md" },
+          messages: [
+            { role: "assistant", type: "message", content: "Iteración: precios añadidos." }
+          ]
         };
       }
     }
@@ -207,6 +229,17 @@ test("POST /projects/:id/prompts de seguimiento reutiliza el mismo chat de v0", 
     assert.equal(firstBody.providerMeta.requestId, "chat-real-1");
     assert.equal(secondBody.providerMeta.requestId, "chat-real-1");
     assert.equal(secondBody.providerMeta.previewUrl, "https://preview.v0.dev/real-2");
+
+    const assistants = server.db
+      .prepare(
+        "SELECT content FROM prompt_messages WHERE project_id = ? AND role = 'assistant' ORDER BY created_at ASC, id ASC"
+      )
+      .all(projectId)
+      .map((r) => r.content);
+    assert.deepEqual(assistants, [
+      "Primera versión lista.",
+      "Iteración: precios añadidos."
+    ]);
   } finally {
     await server.close();
   }
@@ -301,20 +334,30 @@ test("POST /projects/:id/prompts mapea error 429 de v0 a PROVIDER_RATE_LIMITED r
   }
 });
 
-test("POST /projects/:id/prompts marca timeout cuando v0 cuelga", async () => {
+test("POST /projects/:id/prompts usa result.text si no hay messages de asistente", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-v0-"));
   const dbPath = path.join(tmpDir, "db.sqlite");
 
   const fakeClient = {
     chats: {
-      create: () => new Promise(() => {})
+      create: async () => ({
+        id: "chat-text-only",
+        object: "chat",
+        messages: [],
+        text: "Resumen generado solo en text.",
+        latestVersion: {
+          id: "version-t",
+          object: "version",
+          status: "completed",
+          demoUrl: "https://preview.v0.dev/t"
+        },
+        modelConfiguration: { modelId: "v0-1.5-md" }
+      })
     }
   };
+
   const provider = createV0Provider({ client: fakeClient });
-  const server = await startTestServer(dbPath, {
-    generationProvider: provider,
-    generationTimeoutMs: 25
-  });
+  const server = await startTestServer(dbPath, { generationProvider: provider });
 
   try {
     const { projectId } = await createProject(server.baseUrl);
@@ -326,17 +369,18 @@ test("POST /projects/:id/prompts marca timeout cuando v0 cuelga", async () => {
         "x-session-id": SESSION_ID,
         "x-idempotency-key": createIdempotencyKey()
       },
-      body: JSON.stringify({ prompt: "muy lento" })
+      body: JSON.stringify({ prompt: "solo text" })
     });
 
     const body = await response.json();
-    assert.equal(body.status, "failed");
-    assert.deepEqual(body.providerMeta, {
-      provider: "v0",
-      errorType: "timeout",
-      errorCode: "PROVIDER_TIMEOUT",
-      retryable: true
-    });
+    assert.equal(body.status, "success");
+
+    const assistantMsg = server.db
+      .prepare(
+        "SELECT content FROM prompt_messages WHERE project_id = ? AND role = 'assistant' LIMIT 1"
+      )
+      .get(projectId);
+    assert.equal(assistantMsg.content, "Resumen generado solo en text.");
   } finally {
     await server.close();
   }

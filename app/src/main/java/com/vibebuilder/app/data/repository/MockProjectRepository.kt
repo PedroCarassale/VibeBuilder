@@ -170,7 +170,7 @@ class MockProjectRepository : ProjectRepository {
     )
 
     private fun defaultAssistantReply(versionNumber: Int): String =
-        "Versión $versionNumber generada. Revisa el preview y envía un nuevo prompt para iterar."
+        "Tu app ya está lista (versión $versionNumber)."
 
     private fun mockPreviewHtml(prompt: String, versionNumber: Int): String = """
         <h1>Web app generada (v$versionNumber)</h1>

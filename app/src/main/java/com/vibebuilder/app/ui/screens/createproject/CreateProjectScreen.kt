@@ -21,6 +21,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vibebuilder.app.R
+import com.vibebuilder.app.ui.components.AppCard
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,6 +51,7 @@ fun CreateProjectScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.create_project_title)) },
@@ -59,7 +62,13 @@ fun CreateProjectScreen(
                             contentDescription = stringResource(R.string.back_cd)
                         )
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         }
     ) { padding ->
@@ -71,47 +80,52 @@ fun CreateProjectScreen(
                 .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            OutlinedTextField(
-                value = state.title,
-                onValueChange = viewModel::onTitleChange,
-                label = { Text(stringResource(R.string.create_project_name_label)) },
-                singleLine = true,
-                isError = state.titleError != null,
-                supportingText = state.titleError?.let { { Text(it) } },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            OutlinedTextField(
-                value = state.description,
-                onValueChange = viewModel::onDescriptionChange,
-                label = { Text(stringResource(R.string.create_project_description_label)) },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            if (state.submitError != null) {
-                Text(
-                    text = state.submitError!!,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium
+            AppCard(modifier = Modifier.fillMaxWidth()) {
+                OutlinedTextField(
+                    value = state.title,
+                    onValueChange = viewModel::onTitleChange,
+                    label = { Text(stringResource(R.string.create_project_name_label)) },
+                    singleLine = true,
+                    isError = state.titleError != null,
+                    supportingText = state.titleError?.let { { Text(it) } },
+                    modifier = Modifier.fillMaxWidth()
                 )
-            }
 
-            Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(4.dp))
 
-            Button(
-                onClick = viewModel::submit,
-                enabled = state.canSubmit,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (state.isSubmitting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.height(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
+                OutlinedTextField(
+                    value = state.description,
+                    onValueChange = viewModel::onDescriptionChange,
+                    label = { Text(stringResource(R.string.create_project_description_label)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (state.submitError != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = state.submitError!!,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium
                     )
-                } else {
-                    Text(stringResource(R.string.create_project_submit))
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                Button(
+                    onClick = viewModel::submit,
+                    enabled = state.canSubmit,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (state.isSubmitting) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.height(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        Text(stringResource(R.string.create_project_submit))
+                    }
                 }
             }
         }

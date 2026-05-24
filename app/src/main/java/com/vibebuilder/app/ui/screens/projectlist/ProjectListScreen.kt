@@ -1,9 +1,7 @@
 package com.vibebuilder.app.ui.screens.projectlist
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,15 +12,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
@@ -32,6 +31,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vibebuilder.app.R
 import com.vibebuilder.app.domain.model.Project
+import com.vibebuilder.app.ui.components.AppCard
 import com.vibebuilder.app.ui.components.EmptyView
 import com.vibebuilder.app.ui.components.ErrorView
 import com.vibebuilder.app.ui.components.LoadingView
@@ -40,18 +40,38 @@ import com.vibebuilder.app.ui.components.LoadingView
 @Composable
 fun ProjectListScreen(
     onCreateProject: () -> Unit,
+    onOpenV0Settings: () -> Unit,
     onProjectClick: (String) -> Unit,
     viewModel: ProjectListViewModel = viewModel(factory = ProjectListViewModel.Factory)
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(title = { Text(stringResource(R.string.project_list_title)) })
+            TopAppBar(
+                title = { Text(stringResource(R.string.project_list_title)) },
+                actions = {
+                    IconButton(onClick = onOpenV0Settings) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = stringResource(R.string.project_list_settings_cd)
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
+            )
         },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onCreateProject,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
                 icon = {
                     Icon(
                         Icons.Default.Add,
@@ -108,34 +128,28 @@ private fun ProjectList(
 
 @Composable
 private fun ProjectCard(project: Project, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
-        )
+    AppCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = onClick
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Text(
+            text = project.title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (project.description.isNotBlank()) {
+            Spacer(Modifier.height(4.dp))
             Text(
-                text = project.title,
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            if (project.description.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = project.description,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "v${project.currentVersionNumber}",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary
+                text = project.description,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "v${project.currentVersionNumber}",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
     }
 }

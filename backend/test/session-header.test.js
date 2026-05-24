@@ -67,7 +67,8 @@ test("Rutas D1 rechazan requests sin X-Session-Id", async () => {
       },
       { method: "GET", url: `${server.baseUrl}/projects/${projectId}/messages` },
       { method: "GET", url: `${server.baseUrl}/projects/${projectId}/versions` },
-      { method: "GET", url: `${server.baseUrl}/projects/${projectId}/preview?target=current` }
+      { method: "GET", url: `${server.baseUrl}/projects/${projectId}/preview?target=current` },
+      { method: "GET", url: `${server.baseUrl}/integrations/v0` }
     ];
 
     for (const check of checks) {

@@ -18,8 +18,7 @@ async function startTestServer(dbPath, options = {}) {
   const db = createDatabase(dbPath);
   const app = createApp({
     db,
-    generationProvider: options.generationProvider,
-    generationTimeoutMs: options.generationTimeoutMs
+    generationProvider: options.generationProvider
   });
 
   await new Promise((resolve) => app.listen(0, resolve));
@@ -80,7 +79,8 @@ test("POST /projects/:projectId/prompts crea PromptMessage y ProjectVersion en s
           finishReason: "completed",
           latencyMs: 12,
           secretToken: "should-not-persist"
-        }
+        },
+        assistantText: "Respuesta de prueba del mock."
       };
     }
   };
@@ -125,6 +125,13 @@ test("POST /projects/:projectId/prompts crea PromptMessage y ProjectVersion en s
     assert.equal(promptRow.role, "user");
     assert.equal(promptRow.content, "Crea una landing para una academia de baile");
 
+    const assistantRow = server.db
+      .prepare("SELECT role, content FROM prompt_messages WHERE id != ? AND project_id = ?")
+      .get(body.promptMessageId, projectId);
+    assert.ok(assistantRow);
+    assert.equal(assistantRow.role, "assistant");
+    assert.equal(assistantRow.content, "Respuesta de prueba del mock.");
+
     const versionRow = readVersionRow(server.db, body.projectVersionId);
     assert.ok(versionRow);
     assert.equal(versionRow.id, body.projectVersionId);
@@ -144,7 +151,7 @@ test("POST /projects/:projectId/prompts crea PromptMessage y ProjectVersion en s
 
     const { versionCount, messageCount } = countProjectRows(server.db, projectId);
     assert.equal(versionCount, 1);
-    assert.equal(messageCount, 1);
+    assert.equal(messageCount, 2);
   } finally {
     await server.close();
   }
@@ -367,32 +374,20 @@ test("POST /projects/:projectId/prompts hace rollback y preserva current_version
   }
 });
 
-test("POST /projects/:projectId/prompts marca failed por timeout del proveedor", async () => {
+test("POST /projects/:projectId/prompts usa mensaje fallback si el proveedor no devuelve assistantText", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-"));
   const dbPath = path.join(tmpDir, "db.sqlite");
   const provider = {
     name: "mock-v0",
-    async generate({ signal }) {
-      await new Promise((resolve, reject) => {
-        const timeoutId = setTimeout(resolve, 100);
-        signal.addEventListener(
-          "abort",
-          () => {
-            clearTimeout(timeoutId);
-            const error = new Error("aborted");
-            error.name = "AbortError";
-            reject(error);
-          },
-          { once: true }
-        );
-      });
-      return { providerMeta: { model: "v0-simulated" } };
+    async generate() {
+      return {
+        providerMeta: {
+          model: "v0-simulated"
+        }
+      };
     }
   };
-  const server = await startTestServer(dbPath, {
-    generationProvider: provider,
-    generationTimeoutMs: 10
-  });
+  const server = await startTestServer(dbPath, { generationProvider: provider });
 
   try {
     const { projectId } = await createProject(server.baseUrl);
@@ -411,17 +406,20 @@ test("POST /projects/:projectId/prompts marca failed por timeout del proveedor",
 
     assert.equal(response.status, 201);
     const body = await response.json();
-    assert.equal(body.status, "failed");
-    assert.deepEqual(body.providerMeta, {
-      provider: "mock-v0",
-      errorType: "timeout",
-      errorCode: "PROVIDER_TIMEOUT",
-      retryable: true
-    });
+    assert.equal(body.status, "success");
 
-    const versionRow = readVersionRow(server.db, body.projectVersionId);
-    assert.equal(versionRow.status, "failed");
-    assert.deepEqual(JSON.parse(versionRow.provider_meta), body.providerMeta);
+    const rows = server.db
+      .prepare(
+        "SELECT role, content FROM prompt_messages WHERE project_id = ? ORDER BY created_at ASC, id ASC"
+      )
+      .all(projectId);
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].role, "user");
+    assert.equal(rows[1].role, "assistant");
+    assert.equal(
+      rows[1].content,
+      "Tu app ya está lista. Ábrela en el navegador para verla."
+    );
   } finally {
     await server.close();
   }
@@ -498,7 +496,7 @@ test("POST /projects/:projectId/prompts reintento visible crea una sola version 
 
     const { versionCount, messageCount } = countProjectRows(server.db, projectId);
     assert.equal(versionCount, 2);
-    assert.equal(messageCount, 2);
+    assert.equal(messageCount, 3);
   } finally {
     await server.close();
   }
@@ -577,6 +575,7 @@ test("POST /projects/:projectId/prompts de seguimiento crea N+1 y mantiene vincu
           FROM prompt_messages m
           JOIN project_versions v ON v.id = m.version_id
           WHERE m.project_id = ?
+            AND m.role = 'user'
           ORDER BY v.version_number ASC;
         `
       )
@@ -697,7 +696,7 @@ test("POST /projects/:projectId/prompts reusa respuesta con misma key y payload"
 
     const { versionCount, messageCount } = countProjectRows(server.db, projectId);
     assert.equal(versionCount, 1);
-    assert.equal(messageCount, 1);
+    assert.equal(messageCount, 2);
   } finally {
     await server.close();
   }

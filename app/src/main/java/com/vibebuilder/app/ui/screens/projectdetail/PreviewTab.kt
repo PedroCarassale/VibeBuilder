@@ -9,17 +9,20 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -32,22 +35,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.vibebuilder.app.R
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.VersionStatus
+import com.vibebuilder.app.ui.components.AppCard
+import com.vibebuilder.app.ui.util.QrCodeEncoder
 
 @Composable
 fun PreviewTab(
     currentVersion: ProjectVersion?,
+    previewResolution: PreviewResolutionUiState,
     isOpeningExternal: Boolean,
     externalError: PreviewExternalError?,
     externalErrorMessage: String?,
     onOpenInBrowser: () -> Unit,
-    onDismissExternalFeedback: () -> Unit
+    onDismissExternalFeedback: () -> Unit,
+    onRetryResolvePreview: () -> Unit
 ) {
     if (currentVersion == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -60,12 +70,22 @@ fun PreviewTab(
         return
     }
 
-    val previewUrl = currentVersion.previewUrl?.trim().orEmpty()
-    val canRenderPreview =
-        currentVersion.status == VersionStatus.READY && isSupportedPreviewUrl(previewUrl)
-    var isLoading by remember(previewUrl) { mutableStateOf(canRenderPreview) }
-    var hasError by remember(previewUrl) { mutableStateOf(false) }
-    var webViewRef by remember(previewUrl) { mutableStateOf<WebView?>(null) }
+    val localPreviewUrl = currentVersion.previewUrl?.trim().orEmpty()
+    val hasLocalPreviewUrl = isSupportedPreviewUrl(localPreviewUrl)
+    val resolvedPreviewUrl = previewResolution.url?.trim().orEmpty()
+    val displayPreviewUrl = when {
+        hasLocalPreviewUrl -> localPreviewUrl
+        isSupportedPreviewUrl(resolvedPreviewUrl) -> resolvedPreviewUrl
+        else -> ""
+    }
+    val canRenderWebView =
+        currentVersion.status == VersionStatus.READY && hasLocalPreviewUrl
+    val canShowQr =
+        currentVersion.status == VersionStatus.READY && isSupportedPreviewUrl(displayPreviewUrl)
+
+    var isLoading by remember(localPreviewUrl) { mutableStateOf(canRenderWebView) }
+    var hasError by remember(localPreviewUrl) { mutableStateOf(false) }
+    var webViewRef by remember(localPreviewUrl) { mutableStateOf<WebView?>(null) }
 
     Column(
         modifier = Modifier
@@ -83,56 +103,45 @@ fun PreviewTab(
             color = MaterialTheme.colorScheme.primary
         )
 
-        Card(
+        AppCard(
             modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
-            )
+            contentPadding = PaddingValues(12.dp)
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = "Prompt",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = currentVersion.prompt,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
+            Text(
+                text = "Prompt",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = currentVersion.prompt,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
         }
 
-        Card(
+        AppCard(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                .weight(1f)
+                .fillMaxHeight(),
+            shape = MaterialTheme.shapes.medium,
+            contentPadding = PaddingValues(0.dp),
+            expandInnerHeight = true
         ) {
             when {
-                !canRenderPreview -> {
+                previewResolution.isLoading -> {
                     Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(16.dp),
+                        modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = if (currentVersion.status != VersionStatus.READY) {
-                                stringResource(R.string.preview_not_ready)
-                            } else {
-                                stringResource(R.string.preview_url_unavailable)
-                            },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        CircularProgressIndicator()
                     }
                 }
-                hasError -> {
+
+                canRenderWebView && hasError -> {
                     Column(
                         modifier = Modifier
                             .fillMaxSize()
@@ -143,7 +152,8 @@ fun PreviewTab(
                         Text(
                             text = stringResource(R.string.preview_load_failed),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
                         )
                         Spacer(Modifier.height(12.dp))
                         Button(onClick = {
@@ -155,7 +165,8 @@ fun PreviewTab(
                         }
                     }
                 }
-                else -> {
+
+                canRenderWebView -> {
                     Box(modifier = Modifier.fillMaxSize()) {
                         AndroidView(
                             modifier = Modifier.fillMaxSize(),
@@ -203,15 +214,15 @@ fun PreviewTab(
                                             isLoading = false
                                         }
                                     }
-                                    loadUrl(previewUrl)
+                                    loadUrl(localPreviewUrl)
                                 }
                             },
                             update = { webView ->
                                 webViewRef = webView
-                                if (webView.url != previewUrl) {
+                                if (webView.url != localPreviewUrl) {
                                     isLoading = true
                                     hasError = false
-                                    webView.loadUrl(previewUrl)
+                                    webView.loadUrl(localPreviewUrl)
                                 }
                             }
                         )
@@ -221,6 +232,51 @@ fun PreviewTab(
                                 contentAlignment = Alignment.Center
                             ) {
                                 CircularProgressIndicator()
+                            }
+                        }
+                    }
+                }
+
+                canShowQr -> {
+                    PreviewQrContent(
+                        previewUrl = displayPreviewUrl,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp)
+                    )
+                }
+
+                else -> {
+                    val message = when {
+                        currentVersion.status != VersionStatus.READY ->
+                            stringResource(R.string.preview_not_ready)
+
+                        previewResolution.error != null ->
+                            previewResolutionErrorMessage(
+                                error = previewResolution.error,
+                                errorMessage = previewResolution.errorMessage
+                            )
+
+                        else -> stringResource(R.string.preview_url_unavailable)
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.Center,
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        if (previewResolution.error != null) {
+                            Spacer(Modifier.height(12.dp))
+                            Button(onClick = onRetryResolvePreview) {
+                                Text(text = stringResource(R.string.retry))
                             }
                         }
                     }
@@ -263,28 +319,80 @@ fun PreviewTab(
         }
 
         if (resolvedErrorMessage != null) {
-            Card(
+            AppCard(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer
-                )
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                ),
+                borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
+                contentPadding = PaddingValues(12.dp)
             ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = resolvedErrorMessage,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                    TextButton(
-                        onClick = onDismissExternalFeedback,
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text(text = stringResource(R.string.dismiss))
-                    }
+                Text(
+                    text = resolvedErrorMessage,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                TextButton(
+                    onClick = onDismissExternalFeedback,
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Text(text = stringResource(R.string.dismiss))
                 }
             }
         }
     }
+}
+
+@Composable
+private fun PreviewQrContent(
+    previewUrl: String,
+    modifier: Modifier = Modifier
+) {
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        val density = LocalDensity.current
+        val titleSpacing = 16.dp
+        val qrSize = minOf(maxWidth, maxHeight - 40.dp - titleSpacing).coerceAtLeast(160.dp)
+        val qrSizePx = with(density) { qrSize.roundToPx() }
+        val qrBitmap = remember(previewUrl, qrSizePx) {
+            QrCodeEncoder.encode(previewUrl, qrSizePx)
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Text(
+                text = stringResource(R.string.preview_qr_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                textAlign = TextAlign.Center
+            )
+            Spacer(Modifier.height(titleSpacing))
+            qrBitmap?.let { bitmap ->
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = stringResource(R.string.preview_qr_content_description),
+                    modifier = Modifier.size(qrSize)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun previewResolutionErrorMessage(
+    error: PreviewExternalError,
+    errorMessage: String?
+): String = when (error) {
+    PreviewExternalError.NotReady -> stringResource(R.string.preview_not_ready)
+    PreviewExternalError.Expired -> stringResource(R.string.preview_external_expired)
+    PreviewExternalError.Unavailable -> stringResource(R.string.preview_external_unavailable)
+    PreviewExternalError.NoBrowser -> stringResource(R.string.preview_external_no_browser)
+    PreviewExternalError.Unknown -> errorMessage ?: stringResource(R.string.preview_external_unknown)
 }
 
 private fun isSupportedPreviewUrl(previewUrl: String): Boolean {

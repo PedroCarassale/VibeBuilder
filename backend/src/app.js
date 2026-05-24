@@ -4,8 +4,9 @@ import {
   ProviderTimeoutError,
   V0ProviderError,
   createMockV0Provider,
-  generateWithTimeout
+  createV0Provider
 } from "./generation-provider.js";
+import { testV0ApiConnection } from "./v0-connection-test.js";
 
 const SESSION_ID_HEADER = "x-session-id";
 const IDEMPOTENCY_KEY_HEADER = "x-idempotency-key";
@@ -63,7 +64,23 @@ const PREVIEW_UNAVAILABLE_ERROR = {
 };
 const UUID_V4_REGEX =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const DEFAULT_GENERATION_TIMEOUT_MS = 8_000;
+
+const GENERATION_ASSISTANT_FALLBACK_MESSAGE =
+  "Tu app ya está lista. Ábrela en el navegador para verla.";
+
+const KEYSTORE_UNAVAILABLE_ERROR = {
+  code: "KEYSTORE_UNAVAILABLE",
+  message:
+    "Server is not configured to store per-session v0 keys (set V0_KEYSTORE_SECRET, min 16 chars)."
+};
+const INVALID_V0_KEY_BODY_ERROR = {
+  code: "INVALID_V0_KEY_BODY",
+  message: "Body must be JSON with a non-empty string field \"apiKey\"."
+};
+const NO_STORED_V0_KEY_ERROR = {
+  code: "NO_STORED_V0_KEY",
+  message: "No saved v0 API key for this session. Pass \"apiKey\" in the body or save a key first."
+};
 
 function getValidSessionId(request, response) {
   const sessionId = request.headers[SESSION_ID_HEADER];
@@ -86,6 +103,11 @@ function getValidIdempotencyKey(request, response) {
 }
 
 function sendJson(response, statusCode, body) {
+  if (statusCode === 204) {
+    response.writeHead(204);
+    response.end();
+    return;
+  }
   response.writeHead(statusCode, { "content-type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(body));
 }
@@ -494,7 +516,7 @@ function createListProjectsHandler(db) {
   };
 }
 
-function createCreatePromptHandler(db, idempotencyStore, telemetryStore) {
+function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolveGenerationService) {
   const findProjectBySessionStatement = db.prepare(`
     SELECT id, current_version_id
     FROM projects
@@ -545,7 +567,7 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore) {
       );
   `);
 
-  return async function handleCreatePrompt(request, response, projectId, generationService, endpoint) {
+  return async function handleCreatePrompt(request, response, projectId, endpoint) {
     const sessionId = getValidSessionId(request, response);
     if (!sessionId) return;
     const idempotencyKey = getValidIdempotencyKey(request, response);
@@ -616,6 +638,8 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore) {
       return;
     }
 
+    const generationService = resolveGenerationService(sessionId);
+
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     if (!prompt) {
       sendIdempotentResponse(400, { error: INVALID_PROMPT_ERROR });
@@ -623,26 +647,24 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore) {
     }
 
     const promptMessageId = randomUUID();
+    const assistantPromptMessageId = randomUUID();
     const projectVersionId = randomUUID();
     const now = new Date().toISOString();
     let status = "success";
     let providerMeta = null;
     let previewUrl = null;
+    let generationResult = null;
     const currentVersionMeta = project.current_version_id
       ? findCurrentVersionMetaStatement.get(project.current_version_id, projectId)
       : null;
     const existingV0ChatId = extractExistingV0ChatId(currentVersionMeta?.provider_meta);
 
     try {
-      const generationResult = await generateWithTimeout({
-        provider: generationService.provider,
-        payload: {
-          projectId,
-          prompt,
-          sessionId,
-          chatId: generationService.provider.name === "v0" ? existingV0ChatId : null
-        },
-        timeoutMs: generationService.timeoutMs
+      generationResult = await generationService.provider.generate({
+        projectId,
+        prompt,
+        sessionId,
+        chatId: generationService.provider.name === "v0" ? existingV0ChatId : null
       });
 
       providerMeta = normalizeProviderMeta(generationResult.providerMeta, generationService.provider.name);
@@ -676,6 +698,21 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore) {
         now
       );
       if (status === "success") {
+        const rawAssistant =
+          generationResult && typeof generationResult.assistantText === "string"
+            ? generationResult.assistantText.trim()
+            : "";
+        const assistantContent =
+          rawAssistant.length > 0 ? rawAssistant : GENERATION_ASSISTANT_FALLBACK_MESSAGE;
+        const assistantCreatedAt = new Date(new Date(now).getTime() + 1).toISOString();
+        insertPromptMessageStatement.run(
+          assistantPromptMessageId,
+          projectId,
+          projectVersionId,
+          "assistant",
+          assistantContent,
+          assistantCreatedAt
+        );
         updateProjectCurrentVersionStatement.run(
           projectVersionId,
           now,
@@ -920,6 +957,165 @@ function createGetProjectPreviewHandler(db, telemetryStore) {
   };
 }
 
+function createGenerationServiceResolver({
+  sessionV0KeyStore,
+  generationProvider,
+  v0ApiBaseUrl,
+  sessionGenerationProviderFactory
+}) {
+  const defaultProvider = generationProvider ?? createMockV0Provider();
+
+  return function resolveGenerationService(sessionId) {
+    if (sessionV0KeyStore?.isEnabled) {
+      const plain = sessionV0KeyStore.getDecryptedApiKey(sessionId);
+      if (typeof plain === "string" && plain.trim().length > 0) {
+        const trimmed = plain.trim();
+        const baseUrl =
+          typeof v0ApiBaseUrl === "string" && v0ApiBaseUrl.trim().length > 0
+            ? v0ApiBaseUrl.trim()
+            : undefined;
+        const provider =
+          typeof sessionGenerationProviderFactory === "function"
+            ? sessionGenerationProviderFactory(trimmed, baseUrl)
+            : createV0Provider(
+                baseUrl ? { apiKey: trimmed, baseUrl } : { apiKey: trimmed }
+              );
+        return { provider };
+      }
+    }
+
+    return { provider: defaultProvider };
+  };
+}
+
+function createV0IntegrationHandlers({
+  sessionV0KeyStore,
+  defaultGenerationProvider,
+  v0ApiBaseUrl
+}) {
+  async function handleGetV0Integration(request, response) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    const storageAvailable = Boolean(sessionV0KeyStore?.isEnabled);
+    const sessionStatus = storageAvailable
+      ? sessionV0KeyStore.getStatus(sessionId)
+      : { configured: false, keyHint: null };
+
+    sendJson(response, 200, {
+      keyStorageAvailable: storageAvailable,
+      sessionKeyConfigured: sessionStatus.configured,
+      sessionKeyHint: sessionStatus.keyHint,
+      envKeyActive: defaultGenerationProvider?.name === "v0"
+    });
+  }
+
+  async function handlePutV0Integration(request, response) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    if (!sessionV0KeyStore?.isEnabled) {
+      sendJson(response, 503, { error: KEYSTORE_UNAVAILABLE_ERROR });
+      return;
+    }
+
+    let body;
+    try {
+      body = await parseJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: INVALID_JSON_ERROR });
+      return;
+    }
+
+    const apiKey = typeof body.apiKey === "string" ? body.apiKey : "";
+    if (!apiKey.trim()) {
+      sendJson(response, 400, { error: INVALID_V0_KEY_BODY_ERROR });
+      return;
+    }
+
+    try {
+      sessionV0KeyStore.save(sessionId, apiKey);
+    } catch (error) {
+      sendJson(response, 400, {
+        error: {
+          code: "INVALID_V0_KEY",
+          message: error?.message ?? "Could not save API key."
+        }
+      });
+      return;
+    }
+
+    sendJson(response, 204);
+  }
+
+  async function handleDeleteV0Integration(request, response) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    if (!sessionV0KeyStore?.isEnabled) {
+      sendJson(response, 503, { error: KEYSTORE_UNAVAILABLE_ERROR });
+      return;
+    }
+
+    sessionV0KeyStore.delete(sessionId);
+    sendJson(response, 204);
+  }
+
+  async function handlePostV0IntegrationTest(request, response) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    let body = {};
+    try {
+      body = await parseJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: INVALID_JSON_ERROR });
+      return;
+    }
+
+    let candidate =
+      typeof body.apiKey === "string" && body.apiKey.trim().length > 0 ? body.apiKey.trim() : null;
+
+    if (!candidate) {
+      if (!sessionV0KeyStore?.isEnabled) {
+        sendJson(response, 503, { error: KEYSTORE_UNAVAILABLE_ERROR });
+        return;
+      }
+      candidate = sessionV0KeyStore.getDecryptedApiKey(sessionId);
+      if (!candidate?.trim()) {
+        sendJson(response, 400, { error: NO_STORED_V0_KEY_ERROR });
+        return;
+      }
+    }
+
+    const baseUrl =
+      typeof v0ApiBaseUrl === "string" && v0ApiBaseUrl.trim().length > 0
+        ? v0ApiBaseUrl.trim()
+        : undefined;
+
+    try {
+      await testV0ApiConnection({ apiKey: candidate, baseUrl });
+    } catch (error) {
+      sendJson(response, 400, {
+        error: {
+          code: "V0_CONNECTION_FAILED",
+          message: error?.message ?? "v0 API connection test failed."
+        }
+      });
+      return;
+    }
+
+    sendJson(response, 200, { ok: true });
+  }
+
+  return {
+    handleGetV0Integration,
+    handlePutV0Integration,
+    handleDeleteV0Integration,
+    handlePostV0IntegrationTest
+  };
+}
+
 function createGetTelemetrySummaryHandler(telemetryStore) {
   return function handleGetTelemetrySummary(request, response) {
     const sessionId = getValidSessionId(request, response);
@@ -930,20 +1126,39 @@ function createGetTelemetrySummaryHandler(telemetryStore) {
   };
 }
 
-export function createApp({ db, generationProvider, generationTimeoutMs = DEFAULT_GENERATION_TIMEOUT_MS }) {
+export function createApp({
+  db,
+  generationProvider,
+  sessionV0KeyStore = null,
+  v0ApiBaseUrl,
+  sessionGenerationProviderFactory = null
+} = {}) {
   const idempotencyStore = createIdempotencyStore(db);
   const telemetryStore = createTelemetryStore(db);
   const handleCreateProject = createProjectHandler(db, idempotencyStore, telemetryStore);
   const handleListProjects = createListProjectsHandler(db);
-  const handleCreatePrompt = createCreatePromptHandler(db, idempotencyStore, telemetryStore);
+  const defaultGenerationProvider = generationProvider ?? createMockV0Provider();
+  const resolveGenerationService = createGenerationServiceResolver({
+    sessionV0KeyStore,
+    generationProvider,
+    v0ApiBaseUrl,
+    sessionGenerationProviderFactory
+  });
+  const handleCreatePrompt = createCreatePromptHandler(
+    db,
+    idempotencyStore,
+    telemetryStore,
+    resolveGenerationService
+  );
   const handleListProjectMessages = createListProjectMessagesHandler(db);
   const handleListProjectVersions = createListProjectVersionsHandler(db);
   const handleGetProjectPreview = createGetProjectPreviewHandler(db, telemetryStore);
   const handleGetTelemetrySummary = createGetTelemetrySummaryHandler(telemetryStore);
-  const generationService = {
-    provider: generationProvider ?? createMockV0Provider(),
-    timeoutMs: generationTimeoutMs
-  };
+  const v0IntegrationHandlers = createV0IntegrationHandlers({
+    sessionV0KeyStore,
+    defaultGenerationProvider,
+    v0ApiBaseUrl
+  });
 
   return createServer(async (request, response) => {
     const requestUrl = new URL(request.url, "http://localhost");
@@ -968,9 +1183,29 @@ export function createApp({ db, generationProvider, generationTimeoutMs = DEFAUL
       return;
     }
 
+    if (request.method === "GET" && path === "/integrations/v0") {
+      await v0IntegrationHandlers.handleGetV0Integration(request, response);
+      return;
+    }
+
+    if (request.method === "PUT" && path === "/integrations/v0") {
+      await v0IntegrationHandlers.handlePutV0Integration(request, response);
+      return;
+    }
+
+    if (request.method === "DELETE" && path === "/integrations/v0") {
+      await v0IntegrationHandlers.handleDeleteV0Integration(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && path === "/integrations/v0/test") {
+      await v0IntegrationHandlers.handlePostV0IntegrationTest(request, response);
+      return;
+    }
+
     if (request.method === "POST" && createPromptMatch) {
       const projectId = createPromptMatch[1];
-      await handleCreatePrompt(request, response, projectId, generationService, path);
+      await handleCreatePrompt(request, response, projectId, path);
       return;
     }
 

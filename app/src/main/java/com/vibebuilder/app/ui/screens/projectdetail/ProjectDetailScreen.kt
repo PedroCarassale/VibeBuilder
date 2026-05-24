@@ -12,11 +12,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -47,6 +49,7 @@ fun ProjectDetailScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val promptInput by viewModel.promptInput.collectAsStateWithLifecycle()
     val previewExternalState by viewModel.previewExternalState.collectAsStateWithLifecycle()
+    val previewResolutionState by viewModel.previewResolutionState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -70,6 +73,7 @@ fun ProjectDetailScreen(
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
@@ -84,7 +88,13 @@ fun ProjectDetailScreen(
                             contentDescription = stringResource(R.string.back_cd)
                         )
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
+                )
             )
         }
     ) { padding ->
@@ -100,12 +110,18 @@ fun ProjectDetailScreen(
                     ErrorView(message = "Proyecto no encontrado: ${current.projectId}")
                 is ProjectDetailUiState.Content -> {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        TabRow(selectedTabIndex = selectedTab) {
+                        SecondaryTabRow(
+                            selectedTabIndex = selectedTab,
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        ) {
                             DetailTab.entries.forEachIndexed { index, tab ->
                                 Tab(
                                     selected = selectedTab == index,
                                     onClick = { selectedTab = index },
-                                    text = { Text(stringResource(tab.labelResource())) }
+                                    text = { Text(stringResource(tab.labelResource())) },
+                                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -113,20 +129,44 @@ fun ProjectDetailScreen(
                         Box(modifier = Modifier.weight(1f)) {
                             when (DetailTab.entries[selectedTab]) {
                                 DetailTab.Prompt -> PromptTab(
+                                    projectId = projectId,
                                     messages = current.data.messages,
+                                    currentVersionNumber = current.data.project.currentVersionNumber,
                                     input = promptInput,
+                                    isOpeningPreview = previewExternalState.isResolving,
+                                    previewError = previewExternalState.error,
+                                    previewErrorMessage = previewExternalState.errorMessage,
                                     onPromptChange = viewModel::onPromptChange,
                                     onSend = viewModel::sendPrompt,
-                                    onRetry = viewModel::retrySend
+                                    onRetry = viewModel::retrySend,
+                                    onOpenPreviewInBrowser = { versionNumber ->
+                                        val version = current.data.versions.firstOrNull {
+                                            it.versionNumber == versionNumber
+                                        } ?: current.data.currentVersion
+                                        viewModel.openPreviewInBrowser(version)
+                                    },
+                                    onDismissPreviewFeedback = viewModel::clearPreviewFeedback
                                 )
-                                DetailTab.Preview -> PreviewTab(
-                                    currentVersion = current.data.currentVersion,
-                                    isOpeningExternal = previewExternalState.isResolving,
-                                    externalError = previewExternalState.error,
-                                    externalErrorMessage = previewExternalState.errorMessage,
-                                    onOpenInBrowser = { viewModel.openPreviewInBrowser(current.data.currentVersion) },
-                                    onDismissExternalFeedback = viewModel::clearPreviewFeedback
-                                )
+                                DetailTab.Preview -> {
+                                    val currentVersion = current.data.currentVersion
+                                    LaunchedEffect(currentVersion?.versionNumber) {
+                                        viewModel.resolvePreviewForDisplay(currentVersion)
+                                    }
+                                    PreviewTab(
+                                        currentVersion = currentVersion,
+                                        previewResolution = previewResolutionState,
+                                        isOpeningExternal = previewExternalState.isResolving,
+                                        externalError = previewExternalState.error,
+                                        externalErrorMessage = previewExternalState.errorMessage,
+                                        onOpenInBrowser = {
+                                            viewModel.openPreviewInBrowser(currentVersion)
+                                        },
+                                        onDismissExternalFeedback = viewModel::clearPreviewFeedback,
+                                        onRetryResolvePreview = {
+                                            viewModel.resolvePreviewForDisplay(currentVersion, force = true)
+                                        }
+                                    )
+                                }
                                 DetailTab.History -> HistoryTab(
                                     versions = current.data.versions,
                                     errorMessage = current.data.historyError

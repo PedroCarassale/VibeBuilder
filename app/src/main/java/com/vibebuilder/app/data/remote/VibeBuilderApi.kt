@@ -63,6 +63,13 @@ interface SessionIdProvider {
     fun getSessionId(): String
 }
 
+data class ApiV0IntegrationStatus(
+    val keyStorageAvailable: Boolean,
+    val sessionKeyConfigured: Boolean,
+    val sessionKeyHint: String?,
+    val envKeyActive: Boolean
+)
+
 interface VibeBuilderApi {
     suspend fun getProjects(): List<ApiProject>
     suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion>
@@ -74,6 +81,12 @@ interface VibeBuilderApi {
     suspend fun getProjectMessages(projectId: String): List<ApiPromptMessage>
     suspend fun createProject(title: String, description: String): String
     suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse
+
+    suspend fun getV0IntegrationStatus(): ApiV0IntegrationStatus
+    suspend fun saveV0ApiKey(apiKey: String)
+    suspend fun deleteV0ApiKey()
+    /** Prueba la key del cuerpo, o la guardada en sesión si [apiKey] es null o en blanco. */
+    suspend fun testV0ApiKey(apiKey: String? = null)
 }
 
 class ApiRequestException(
@@ -228,6 +241,43 @@ class HttpVibeBuilderApi(
             status = payload.getString("status"),
             providerMeta = payload.optJSONObject("providerMeta")
         )
+    }
+
+    override suspend fun getV0IntegrationStatus(): ApiV0IntegrationStatus = withContext(Dispatchers.IO) {
+        val response = request(method = "GET", path = "/integrations/v0")
+        val o = JSONObject(response.body)
+        ApiV0IntegrationStatus(
+            keyStorageAvailable = o.optBoolean("keyStorageAvailable", false),
+            sessionKeyConfigured = o.optBoolean("sessionKeyConfigured", false),
+            sessionKeyHint = o.optStringOrNull("sessionKeyHint"),
+            envKeyActive = o.optBoolean("envKeyActive", false)
+        )
+    }
+
+    override suspend fun saveV0ApiKey(apiKey: String) = withContext(Dispatchers.IO) {
+        val requestBody = JSONObject().put("apiKey", apiKey).toString()
+        request(
+            method = "PUT",
+            path = "/integrations/v0",
+            body = requestBody
+        )
+        Unit
+    }
+
+    override suspend fun deleteV0ApiKey() = withContext(Dispatchers.IO) {
+        request(method = "DELETE", path = "/integrations/v0")
+        Unit
+    }
+
+    override suspend fun testV0ApiKey(apiKey: String?) = withContext(Dispatchers.IO) {
+        val trimmed = apiKey?.trim().orEmpty()
+        val body = if (trimmed.isNotEmpty()) {
+            JSONObject().put("apiKey", trimmed).toString()
+        } else {
+            "{}"
+        }
+        request(method = "POST", path = "/integrations/v0/test", body = body)
+        Unit
     }
 
     private fun request(

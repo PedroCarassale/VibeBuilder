@@ -2,7 +2,6 @@ package com.vibebuilder.app.ui.screens.projectdetail
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,8 +10,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.vibebuilder.app.R
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.VersionStatus
+import com.vibebuilder.app.ui.components.AppCard
 import com.vibebuilder.app.ui.components.ErrorView
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -71,45 +69,38 @@ private fun VersionCard(
     version: ProjectVersion,
     isLatestSuccess: Boolean
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant
+    AppCard(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = "Versión ${version.versionNumber}",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
         )
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "Versión ${version.versionNumber}",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = if (isLatestSuccess) {
-                    stringResource(R.string.history_latest_success)
-                } else {
-                    stringResource(R.string.history_status_format, statusLabel(version.status))
-                },
-                style = MaterialTheme.typography.labelLarge,
-                color = if (isLatestSuccess) {
-                    MaterialTheme.colorScheme.primary
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = formatTimestamp(version),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = version.prompt,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = if (isLatestSuccess) {
+                stringResource(R.string.history_latest_success)
+            } else {
+                stringResource(R.string.history_status_format, statusLabel(version.status))
+            },
+            style = MaterialTheme.typography.labelLarge,
+            color = if (isLatestSuccess) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = formatTimestamp(version),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = version.prompt,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }
 

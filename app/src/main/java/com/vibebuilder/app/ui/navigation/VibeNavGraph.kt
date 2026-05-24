@@ -9,6 +9,7 @@ import androidx.navigation.navArgument
 import com.vibebuilder.app.ui.screens.createproject.CreateProjectScreen
 import com.vibebuilder.app.ui.screens.projectdetail.ProjectDetailScreen
 import com.vibebuilder.app.ui.screens.projectlist.ProjectListScreen
+import com.vibebuilder.app.ui.screens.v0settings.V0IntegrationScreen
 
 @Composable
 fun VibeNavGraph() {
@@ -21,6 +22,7 @@ fun VibeNavGraph() {
         composable(Screen.ProjectList.route) {
             ProjectListScreen(
                 onCreateProject = { navController.navigate(Screen.CreateProject.route) },
+                onOpenV0Settings = { navController.navigate(Screen.SettingsV0.route) },
                 onProjectClick = { projectId ->
                     navController.navigate(Screen.ProjectDetail.routeFor(projectId))
                 }
@@ -35,6 +37,10 @@ fun VibeNavGraph() {
                     navController.navigate(Screen.ProjectDetail.routeFor(projectId))
                 }
             )
+        }
+
+        composable(Screen.SettingsV0.route) {
+            V0IntegrationScreen(onBack = { navController.popBackStack() })
         }
 
         composable(

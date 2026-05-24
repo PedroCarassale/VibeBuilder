@@ -21,15 +21,21 @@ object ServiceLocator {
         appContext = context.applicationContext
     }
 
-    val projectRepository: ProjectRepository by lazy {
+    private val httpApi: HttpVibeBuilderApi by lazy {
         check(::appContext.isInitialized) {
             "ServiceLocator must be initialized from Application.onCreate()"
         }
-        val sessionIdProvider = SharedPrefsSessionIdProvider(appContext)
-        val api = HttpVibeBuilderApi(
+        HttpVibeBuilderApi(
             baseUrl = BuildConfig.API_BASE_URL,
-            sessionIdProvider = sessionIdProvider
+            sessionIdProvider = SharedPrefsSessionIdProvider(appContext)
         )
-        RemoteProjectRepository(api)
     }
+
+    val projectRepository: ProjectRepository by lazy {
+        RemoteProjectRepository(httpApi)
+    }
+
+    /** API HTTP compartida (proyectos, integración v0, etc.). */
+    val vibeBuilderApi: HttpVibeBuilderApi
+        get() = httpApi
 }

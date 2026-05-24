@@ -79,7 +79,8 @@ export function createMockV0Provider({ defaultDelayMs = DEFAULT_PROVIDER_DELAY_M
           requestId: `mock-${Date.now()}`,
           latencyMs: elapsedMs,
           promptLength: prompt.length
-        }
+        },
+        assistantText: "Listo: simulación mock lista para previsualizar."
       };
     }
   };
@@ -147,6 +148,40 @@ function pickStringField(source, fields) {
   }
 
   return null;
+}
+
+const MAX_ASSISTANT_TEXT_CHARS = 100_000;
+
+function truncateAssistantText(text) {
+  if (typeof text !== "string") return "";
+  if (text.length <= MAX_ASSISTANT_TEXT_CHARS) return text;
+  return text.slice(0, MAX_ASSISTANT_TEXT_CHARS);
+}
+
+/**
+ * Extrae texto visible del asistente desde la respuesta ChatDetail del SDK v0.
+ * @param {unknown} result
+ * @returns {string}
+ */
+export function extractV0AssistantText(result) {
+  if (!result || typeof result !== "object") return "";
+
+  const messages = result.messages;
+  if (Array.isArray(messages)) {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const m = messages[i];
+      if (!m || typeof m !== "object") continue;
+      if (m.role !== "assistant") continue;
+      if (typeof m.type === "string" && m.type !== "message") continue;
+      const content = typeof m.content === "string" ? m.content.trim() : "";
+      if (content.length > 0) return truncateAssistantText(content);
+    }
+  }
+
+  const topLevel = typeof result.text === "string" ? result.text.trim() : "";
+  if (topLevel.length > 0) return truncateAssistantText(topLevel);
+
+  return "";
 }
 
 function extractV0ProviderMeta(result, prompt, elapsedMs) {
@@ -247,7 +282,8 @@ export function createV0Provider({
         );
         const elapsedMs = Date.now() - startedAt;
         return {
-          providerMeta: extractV0ProviderMeta(result, prompt, elapsedMs)
+          providerMeta: extractV0ProviderMeta(result, prompt, elapsedMs),
+          assistantText: extractV0AssistantText(result)
         };
       } catch (error) {
         if (isAbortError(error)) {

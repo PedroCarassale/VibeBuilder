@@ -85,6 +85,13 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
       ON telemetry_events (project_id);
     CREATE INDEX IF NOT EXISTS idx_telemetry_events_version_id
       ON telemetry_events (version_id);
+
+    CREATE TABLE IF NOT EXISTS session_v0_keys (
+      session_id TEXT PRIMARY KEY,
+      ciphertext TEXT NOT NULL,
+      key_hint TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
   `);
 
   const projectVersionColumns = db.prepare("PRAGMA table_info(project_versions);").all();

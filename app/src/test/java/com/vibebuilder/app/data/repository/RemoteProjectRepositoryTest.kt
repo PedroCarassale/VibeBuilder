@@ -7,6 +7,7 @@ import com.vibebuilder.app.data.remote.ApiProjectVersion
 import com.vibebuilder.app.data.remote.ApiPromptMessage
 import com.vibebuilder.app.data.remote.ApiPromptResponse
 import com.vibebuilder.app.data.remote.ApiRequestException
+import com.vibebuilder.app.data.remote.ApiV0IntegrationStatus
 import com.vibebuilder.app.data.remote.VibeBuilderApi
 import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
 import com.vibebuilder.app.domain.repository.PreviewUrlResolution
@@ -257,4 +258,18 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
             providerMeta = JSONObject()
         )
     }
+
+    override suspend fun getV0IntegrationStatus(): ApiV0IntegrationStatus =
+        ApiV0IntegrationStatus(
+            keyStorageAvailable = false,
+            sessionKeyConfigured = false,
+            sessionKeyHint = null,
+            envKeyActive = false
+        )
+
+    override suspend fun saveV0ApiKey(apiKey: String) = Unit
+
+    override suspend fun deleteV0ApiKey() = Unit
+
+    override suspend fun testV0ApiKey(apiKey: String?) = Unit
 }

@@ -9,6 +9,7 @@ import com.vibebuilder.app.di.ServiceLocator
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
+import com.vibebuilder.app.domain.model.VersionStatus
 import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
 import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import com.vibebuilder.app.domain.repository.ProjectRepository
@@ -40,6 +41,8 @@ sealed interface ProjectDetailUiState {
 
 data class PromptInputState(
     val text: String = "",
+    /** Texto del envío en curso mostrado en el chat hasta que el backend confirme. */
+    val optimisticUserBubble: String? = null,
     val sendStatus: PromptSendStatus = PromptSendStatus.Idle,
     val sendError: String? = null
 ) {
@@ -63,6 +66,14 @@ enum class PreviewExternalError {
     NoBrowser,
     Unknown
 }
+
+data class PreviewResolutionUiState(
+    val isLoading: Boolean = false,
+    val url: String? = null,
+    val error: PreviewExternalError? = null,
+    val errorMessage: String? = null,
+    val versionNumber: Int? = null
+)
 
 class ProjectDetailViewModel(
     private val projectId: String,
@@ -130,6 +141,9 @@ class ProjectDetailViewModel(
     private val _previewExternalState = MutableStateFlow(PreviewExternalUiState())
     val previewExternalState: StateFlow<PreviewExternalUiState> = _previewExternalState.asStateFlow()
 
+    private val _previewResolutionState = MutableStateFlow(PreviewResolutionUiState())
+    val previewResolutionState: StateFlow<PreviewResolutionUiState> = _previewResolutionState.asStateFlow()
+
     fun onPromptChange(value: String) {
         _promptInput.update {
             it.copy(
@@ -146,6 +160,8 @@ class ProjectDetailViewModel(
         val text = current.text.trim()
         _promptInput.update {
             it.copy(
+                text = "",
+                optimisticUserBubble = text,
                 sendStatus = PromptSendStatus.Loading,
                 sendError = null
             )
@@ -156,8 +172,11 @@ class ProjectDetailViewModel(
                     _promptInput.value = PromptInputState(sendStatus = PromptSendStatus.Success)
                 }
                 .onFailure { error ->
-                    _promptInput.update {
-                        it.copy(
+                    _promptInput.update { state ->
+                        val failedBubble = state.optimisticUserBubble
+                        state.copy(
+                            text = failedBubble ?: state.text,
+                            optimisticUserBubble = null,
                             sendStatus = PromptSendStatus.Failed,
                             sendError = error.message ?: "No se pudo enviar el prompt"
                         )
@@ -170,8 +189,70 @@ class ProjectDetailViewModel(
         sendPrompt()
     }
 
+    fun resolvePreviewForDisplay(currentVersion: ProjectVersion?, force: Boolean = false) {
+        if (currentVersion == null) {
+            _previewResolutionState.value = PreviewResolutionUiState()
+            return
+        }
+
+        val versionNumber = currentVersion.versionNumber
+        val localPreviewUrl = currentVersion.previewUrl
+            ?.trim()
+            ?.takeIf(::isSupportedPreviewUrl)
+
+        if (localPreviewUrl != null) {
+            _previewResolutionState.value = PreviewResolutionUiState(
+                url = localPreviewUrl,
+                versionNumber = versionNumber
+            )
+            return
+        }
+
+        if (currentVersion.status != VersionStatus.READY) {
+            _previewResolutionState.value = PreviewResolutionUiState(versionNumber = versionNumber)
+            return
+        }
+
+        if (!force) {
+            val currentResolution = _previewResolutionState.value
+            if (
+                currentResolution.isLoading && currentResolution.versionNumber == versionNumber ||
+                currentResolution.url != null && currentResolution.versionNumber == versionNumber ||
+                currentResolution.error != null && currentResolution.versionNumber == versionNumber
+            ) {
+                return
+            }
+        }
+
+        _previewResolutionState.value = PreviewResolutionUiState(
+            isLoading = true,
+            versionNumber = versionNumber
+        )
+        viewModelScope.launch {
+            applyPreviewResolution(currentVersion, updateExternalState = false)
+        }
+    }
+
     fun openPreviewInBrowser(currentVersion: ProjectVersion?) {
         if (_previewExternalState.value.isResolving) return
+
+        val versionNumber = currentVersion?.versionNumber
+        val cachedResolution = _previewResolutionState.value
+        if (
+            cachedResolution.url != null &&
+            cachedResolution.versionNumber == versionNumber
+        ) {
+            _previewExternalState.update {
+                it.copy(
+                    isResolving = false,
+                    urlToOpen = cachedResolution.url,
+                    error = null,
+                    errorMessage = null
+                )
+            }
+            return
+        }
+
         _previewExternalState.update {
             it.copy(
                 isResolving = true,
@@ -181,8 +262,23 @@ class ProjectDetailViewModel(
             )
         }
         viewModelScope.launch {
-            when (val previewResolution = repository.resolvePreviewUrl(projectId, currentVersion)) {
-                is PreviewUrlResolution.Available -> {
+            applyPreviewResolution(currentVersion, updateExternalState = true)
+        }
+    }
+
+    private suspend fun applyPreviewResolution(
+        currentVersion: ProjectVersion?,
+        updateExternalState: Boolean
+    ) {
+        when (val previewResolution = repository.resolvePreviewUrl(projectId, currentVersion)) {
+            is PreviewUrlResolution.Available -> {
+                _previewResolutionState.update {
+                    PreviewResolutionUiState(
+                        url = previewResolution.url,
+                        versionNumber = currentVersion?.versionNumber
+                    )
+                }
+                if (updateExternalState) {
                     _previewExternalState.update {
                         it.copy(
                             isResolving = false,
@@ -190,12 +286,22 @@ class ProjectDetailViewModel(
                         )
                     }
                 }
+            }
 
-                is PreviewUrlResolution.Unavailable -> {
+            is PreviewUrlResolution.Unavailable -> {
+                val mappedError = mapPreviewError(previewResolution.reason)
+                _previewResolutionState.update {
+                    PreviewResolutionUiState(
+                        error = mappedError,
+                        errorMessage = previewResolution.message,
+                        versionNumber = currentVersion?.versionNumber
+                    )
+                }
+                if (updateExternalState) {
                     _previewExternalState.update {
                         it.copy(
                             isResolving = false,
-                            error = mapPreviewError(previewResolution.reason),
+                            error = mappedError,
                             errorMessage = previewResolution.message
                         )
                     }
@@ -246,6 +352,15 @@ class ProjectDetailViewModel(
         PreviewUnavailableReason.Expired -> PreviewExternalError.Expired
         PreviewUnavailableReason.Unavailable -> PreviewExternalError.Unavailable
         PreviewUnavailableReason.Unknown -> PreviewExternalError.Unknown
+    }
+
+    private fun isSupportedPreviewUrl(previewUrl: String): Boolean {
+        if (previewUrl.isBlank()) return false
+        return runCatching {
+            val parsed = android.net.Uri.parse(previewUrl)
+            val scheme = parsed.scheme?.lowercase()
+            (scheme == "https" || scheme == "http") && !parsed.host.isNullOrBlank()
+        }.getOrDefault(false)
     }
 
     companion object {
