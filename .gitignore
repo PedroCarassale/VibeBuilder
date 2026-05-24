@@ -1,13 +1,13 @@
+# Android / Gradle
 *.iml
 .gradle
 /local.properties
+local.properties
 /.idea/
-.DS_Store
 /build
 /captures
 .externalNativeBuild
 .cxx
-local.properties
 /app/build
 /app/release
 *.apk
@@ -21,3 +21,33 @@ release/
 proguard/
 .navigation/
 *.log
+*.keystore
+!debug.keystore
+
+# Node.js
+node_modules/
+backend/node_modules/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+backend/.env
+
+# Local backend data
+backend/backend/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors & IDE
+.vscode/
+.cursor/
+*.swp
+*.swo
