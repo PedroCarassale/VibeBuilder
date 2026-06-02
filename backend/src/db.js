@@ -1,8 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
-const DEFAULT_DB_PATH = path.resolve("backend/data/vibebuilder.db");
+const DEFAULT_DB_PATH = path.resolve(
+  fileURLToPath(new URL("../data/vibebuilder.db", import.meta.url))
+);
 
 export function createDatabase(dbPath = DEFAULT_DB_PATH) {
   const resolvedPath = path.resolve(dbPath);

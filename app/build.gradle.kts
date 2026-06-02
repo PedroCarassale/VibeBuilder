@@ -4,6 +4,12 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val apiBaseUrl: String =
+    (project.findProperty("API_BASE_URL") as String?)
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: "http://10.0.2.2:3000"
+
 android {
     namespace = "com.vibebuilder.app"
     compileSdk = 35
@@ -14,7 +20,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
-        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:3000\"")
+        buildConfigField("String", "API_BASE_URL", "\"$apiBaseUrl\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables { useSupportLibrary = true }

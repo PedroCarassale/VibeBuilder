@@ -4,6 +4,18 @@ App Android nativa que permite crear web apps describiéndolas en lenguaje natur
 
 Ver el documento de producto en [`AGENTS.md`](./AGENTS.md).
 
+## Backend y deploy en Vercel
+
+El API Node.js vive en [`backend/`](./backend/). Para publicarlo en Vercel y apuntar la app Android (APK) a esa URL, seguí la guía **[`docs/deploy-vercel.md`](./docs/deploy-vercel.md)**.
+
+Resumen rápido:
+
+1. En Vercel, crear proyecto con **Root Directory** = `backend`.
+2. Configurar `V0_API_KEY`, `V0_KEYSTORE_SECRET` (y opcionalmente `V0_API_URL`).
+3. `vercel deploy --prod` desde `backend/`.
+4. En `gradle.properties`: `API_BASE_URL=https://tu-proyecto.vercel.app`
+5. Generar APK release y probar en dispositivo.
+
 ## Stack
 
 - **Kotlin 2.0.21** + **Jetpack Compose** (Material 3)
