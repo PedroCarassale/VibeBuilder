@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createApp } from "../src/app.js";
+import { createApp } from "../src/http-app.js";
 import { createDatabase } from "../src/db.js";
 import { createMockV0Provider } from "../src/generation-provider.js";
 import { createSessionV0KeyStore } from "../src/session-v0-key-store.js";

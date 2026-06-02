@@ -31,7 +31,9 @@ Copia las mismas claves que usarías en `backend/.env` local (ver `backend/.env.
 
 ## 2. Crear y desplegar el proyecto
 
-El **Root Directory** del proyecto en Vercel debe ser `backend` (no la raíz del monorepo).
+El **Root Directory** del proyecto en Vercel debe ser `backend` (no la raíz del monorepo). Si no lo configurás, Vercel puede intentar desplegar archivos incorrectos (por ejemplo `src/app.js`) y fallar con *Invalid export*.
+
+En el dashboard: **Project Settings → General → Root Directory** → `backend`.
 
 ```bash
 cd backend
@@ -119,11 +121,14 @@ Si solo usas `V0_API_KEY` en el servidor (sin keystore por sesión), la generaci
 | `503` en `/integrations/v0` | Falta `V0_KEYSTORE_SECRET` en Vercel |
 | Timeout en prompts | Plan Vercel / `maxDuration`; revisar logs: `vercel logs` |
 
-## Estructura añadida para Vercel
+## Cómo funciona en Vercel
+
+Vercel detecta automáticamente `src/server.js` porque llama a `server.listen()`. Ese archivo enruta todas las peticiones (`/projects`, `/integrations/v0`, etc.). No hace falta carpeta `api/`.
 
 ```
 backend/
-  api/index.js      # handler serverless
-  vercel.json       # rewrites + maxDuration
-  src/bootstrap.js  # init compartido local + Vercel
+  vercel.json         # maxDuration para src/server.js
+  src/server.js       # entrada detectada por Vercel (listen)
+  src/http-app.js     # router HTTP (antes app.js; renombrado para evitar conflicto con convenciones de Vercel)
+  src/bootstrap.js    # init compartido
 ```

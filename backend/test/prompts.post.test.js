@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createApp } from "../src/app.js";
+import { createApp } from "../src/http-app.js";
 import { createDatabase } from "../src/db.js";
 
 const SESSION_ID = "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";

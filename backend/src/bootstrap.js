@@ -1,7 +1,7 @@
 import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createApp } from "./app.js";
+import { createApp } from "./http-app.js";
 import { createDatabase } from "./db.js";
 import { resolveGenerationProvider } from "./generation-provider.js";
 import { createSessionV0KeyStore } from "./session-v0-key-store.js";
@@ -53,15 +53,4 @@ export function createBackendServer(options = {}) {
   });
 
   return { server, db, generationProvider };
-}
-
-let cachedServer = null;
-
-/** Singleton HTTP server for Vercel serverless (reutiliza la misma instancia por contenedor). */
-export function getOrCreateServer() {
-  if (!cachedServer) {
-    loadBackendEnv();
-    cachedServer = createBackendServer().server;
-  }
-  return cachedServer;
 }
