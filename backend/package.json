@@ -8,6 +8,7 @@
     "test": "node --test ./test/**/*.test.js"
   },
   "dependencies": {
+    "@libsql/client": "^0.15.15",
     "dotenv": "^17.4.2",
     "v0-sdk": "^0.16.4"
   }

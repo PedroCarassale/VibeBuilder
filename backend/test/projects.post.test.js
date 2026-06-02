@@ -3,8 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createApp } from "../src/http-app.js";
-import { createDatabase } from "../src/db.js";
+import { startTestServer } from "./test-server.js";
 
 function createSessionId() {
   return "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";
@@ -12,21 +11,6 @@ function createSessionId() {
 
 function createIdempotencyKey() {
   return `idem-project-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-async function startTestServer(dbPath) {
-  const db = createDatabase(dbPath);
-  const app = createApp({ db });
-
-  await new Promise((resolve) => app.listen(0, resolve));
-  const address = app.address();
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-
-  return {
-    db,
-    baseUrl,
-    close: () => new Promise((resolve) => app.close(resolve))
-  };
 }
 
 test("POST /projects crea proyecto y lo asocia a sesion", async () => {

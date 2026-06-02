@@ -5,13 +5,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createApp } from "../src/http-app.js";
 import { createDatabase } from "../src/db.js";
+import { wrapSqliteSyncDatabase } from "../src/database-connection.js";
 import { createMockV0Provider } from "../src/generation-provider.js";
 import { createSessionV0KeyStore } from "../src/session-v0-key-store.js";
 
 const SESSION_ID = "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";
 
 async function startServer(dbPath, options = {}) {
-  const db = createDatabase(dbPath);
+  const syncDb = createDatabase(dbPath);
+  const db = wrapSqliteSyncDatabase(syncDb);
   const app = createApp({
     db,
     generationProvider: options.generationProvider ?? createMockV0Provider(),
@@ -51,7 +53,7 @@ test("PUT /integrations/v0 sin keystore devuelve 503", async () => {
 test("GET/PUT/DELETE /integrations/v0 con almacenamiento de sesión", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-integ-"));
   const dbPath = path.join(tmpDir, "db.sqlite");
-  const db = createDatabase(dbPath);
+  const db = wrapSqliteSyncDatabase(createDatabase(dbPath));
   const sessionV0KeyStore = createSessionV0KeyStore({
     db,
     keystoreSecret: "integration-test-secret-16"

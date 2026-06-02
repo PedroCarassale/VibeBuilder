@@ -72,8 +72,8 @@ export function createSessionV0KeyStore({ db, keystoreSecret }) {
   return {
     isEnabled: true,
 
-    getDecryptedApiKey(sessionId) {
-      const row = selectStmt.get(sessionId);
+    async getDecryptedApiKey(sessionId) {
+      const row = await selectStmt.get(sessionId);
       if (!row?.ciphertext) return null;
       try {
         return decryptGcm(key, row.ciphertext);
@@ -82,8 +82,8 @@ export function createSessionV0KeyStore({ db, keystoreSecret }) {
       }
     },
 
-    getStatus(sessionId) {
-      const row = selectStmt.get(sessionId);
+    async getStatus(sessionId) {
+      const row = await selectStmt.get(sessionId);
       if (!row) {
         return { configured: false, keyHint: null };
       }
@@ -93,7 +93,7 @@ export function createSessionV0KeyStore({ db, keystoreSecret }) {
       };
     },
 
-    save(sessionId, apiKey) {
+    async save(sessionId, apiKey) {
       if (typeof apiKey !== "string") {
         throw new Error("apiKey must be a string.");
       }
@@ -106,11 +106,11 @@ export function createSessionV0KeyStore({ db, keystoreSecret }) {
       }
       const ciphertext = encryptGcm(key, trimmed);
       const hint = makeKeyHint(trimmed);
-      upsertStmt.run(sessionId, ciphertext, hint, new Date().toISOString());
+      await upsertStmt.run(sessionId, ciphertext, hint, new Date().toISOString());
     },
 
-    delete(sessionId) {
-      deleteStmt.run(sessionId);
+    async delete(sessionId) {
+      await deleteStmt.run(sessionId);
     }
   };
 }

@@ -3,8 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createApp } from "../src/http-app.js";
-import { createDatabase } from "../src/db.js";
+import { startTestServer } from "./test-server.js";
 import { createV0Provider } from "../src/generation-provider.js";
 
 const SESSION_ID = "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";
@@ -13,23 +12,6 @@ let idempotencySequence = 0;
 function createIdempotencyKey() {
   idempotencySequence += 1;
   return `idem-prompts-v0-${idempotencySequence}`;
-}
-
-async function startTestServer(dbPath, options = {}) {
-  const db = createDatabase(dbPath);
-  const app = createApp({
-    db,
-    generationProvider: options.generationProvider
-  });
-
-  await new Promise((resolve) => app.listen(0, resolve));
-  const address = app.address();
-
-  return {
-    db,
-    baseUrl: `http://127.0.0.1:${address.port}`,
-    close: () => new Promise((resolve) => app.close(resolve))
-  };
 }
 
 async function createProject(baseUrl) {

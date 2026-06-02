@@ -2,7 +2,7 @@ import { config as loadEnv } from "dotenv";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApp } from "./http-app.js";
-import { createDatabase } from "./db.js";
+import { createDatabaseConnection } from "./database-connection.js";
 import { resolveGenerationProvider } from "./generation-provider.js";
 import { createSessionV0KeyStore } from "./session-v0-key-store.js";
 
@@ -10,6 +10,11 @@ const envPath = resolve(fileURLToPath(new URL("../.env", import.meta.url)));
 
 export function loadBackendEnv() {
   loadEnv({ path: envPath });
+  // Variables de `vercel env pull .env.development.local` (integración Turso, etc.)
+  const vercelDevEnvPath = resolve(
+    fileURLToPath(new URL("../.env.development.local", import.meta.url))
+  );
+  loadEnv({ path: vercelDevEnvPath, override: true });
 }
 
 export function resolveDatabasePath(explicitPath) {
@@ -22,8 +27,10 @@ export function resolveDatabasePath(explicitPath) {
   return undefined;
 }
 
-export function createBackendServer(options = {}) {
-  const db = createDatabase(resolveDatabasePath(options.dbPath ?? process.env.DB_PATH));
+export async function createBackendServer(options = {}) {
+  const db = await createDatabaseConnection(
+    resolveDatabasePath(options.dbPath ?? process.env.DB_PATH)
+  );
   const generationProvider = options.generationProvider ?? resolveGenerationProvider();
 
   const keystoreSecret =

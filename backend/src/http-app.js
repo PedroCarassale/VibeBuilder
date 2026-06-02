@@ -180,12 +180,10 @@ function createIdempotencyStore(db) {
   `);
 
   return {
-    claim({ sessionId, endpoint, idempotencyKey, payloadHash }) {
-      db.exec("BEGIN IMMEDIATE;");
-      try {
-        const existing = findRequestStatement.get(sessionId, endpoint, idempotencyKey);
+    async claim({ sessionId, endpoint, idempotencyKey, payloadHash }) {
+      return db.transaction(async () => {
+        const existing = await findRequestStatement.get(sessionId, endpoint, idempotencyKey);
         if (existing) {
-          db.exec("COMMIT;");
           if (existing.payload_hash !== payloadHash) {
             return { type: "conflict" };
           }
@@ -205,7 +203,7 @@ function createIdempotencyStore(db) {
           return { type: "in_progress" };
         }
 
-        insertRequestStatement.run(
+        await insertRequestStatement.run(
           sessionId,
           endpoint,
           idempotencyKey,
@@ -214,19 +212,11 @@ function createIdempotencyStore(db) {
           null,
           new Date().toISOString()
         );
-        db.exec("COMMIT;");
         return { type: "new" };
-      } catch (error) {
-        try {
-          db.exec("ROLLBACK;");
-        } catch {
-          // noop: rollback can fail if transaction did not start.
-        }
-        throw error;
-      }
+      });
     },
-    saveResponse({ sessionId, endpoint, idempotencyKey, statusCode, body }) {
-      updateResponseStatement.run(
+    async saveResponse({ sessionId, endpoint, idempotencyKey, statusCode, body }) {
+      await updateResponseStatement.run(
         statusCode,
         JSON.stringify(body),
         sessionId,
@@ -263,7 +253,7 @@ function createTelemetryStore(db) {
     LIMIT ?;
   `);
 
-  function track({ eventName, sessionId = null, projectId = null, versionId = null, metadata = null }) {
+  async function track({ eventName, sessionId = null, projectId = null, versionId = null, metadata = null }) {
     const telemetryEvent = {
       id: randomUUID(),
       eventName,
@@ -274,7 +264,7 @@ function createTelemetryStore(db) {
       createdAt: new Date().toISOString()
     };
 
-    insertTelemetryEventStatement.run(
+    await insertTelemetryEventStatement.run(
       telemetryEvent.id,
       telemetryEvent.eventName,
       telemetryEvent.sessionId,
@@ -297,16 +287,16 @@ function createTelemetryStore(db) {
     );
   }
 
-  function getSummary({ sessionId, recentLimit = 25 }) {
+  async function getSummary({ sessionId, recentLimit = 25 }) {
     const counts = { create: 0, generate: 0, fail: 0, preview: 0, iterate: 0 };
-    const countRows = countEventsByNameStatement.all(sessionId);
+    const countRows = await countEventsByNameStatement.all(sessionId);
     for (const row of countRows) {
       if (Object.hasOwn(counts, row.event_name)) {
         counts[row.event_name] = row.total;
       }
     }
 
-    const recentEvents = listRecentEventsStatement.all(sessionId, recentLimit).map((row) => ({
+      const recentEvents = (await listRecentEventsStatement.all(sessionId, recentLimit)).map((row) => ({
       eventName: row.event_name,
       projectId: row.project_id,
       versionId: row.version_id,
@@ -363,7 +353,7 @@ function parseTelemetryMetadata(metadata) {
 
 function safelyTrackTelemetry(telemetryStore, telemetryPayload) {
   try {
-    telemetryStore.track(telemetryPayload);
+    void telemetryStore.track(telemetryPayload);
   } catch (error) {
     console.error(
       JSON.stringify({
@@ -406,7 +396,7 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
 
     let idempotencyRecord;
     try {
-      idempotencyRecord = idempotencyStore.claim({
+      idempotencyRecord = await idempotencyStore.claim({
         sessionId,
         endpoint,
         idempotencyKey,
@@ -444,8 +434,8 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
       return;
     }
 
-    const sendIdempotentResponse = (statusCode, payload) => {
-      idempotencyStore.saveResponse({
+    const sendIdempotentResponse = async (statusCode, payload) => {
+      await idempotencyStore.saveResponse({
         sessionId,
         endpoint,
         idempotencyKey,
@@ -457,13 +447,13 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
 
     const rawTitle = typeof body.title === "string" ? body.title.trim() : "";
     if (!rawTitle) {
-      sendIdempotentResponse(400, { error: INVALID_TITLE_ERROR });
+      await sendIdempotentResponse(400, { error: INVALID_TITLE_ERROR });
       return;
     }
 
     const projectId = randomUUID();
     const now = new Date().toISOString();
-    insertProjectStatement.run(
+    await insertProjectStatement.run(
       projectId,
       sessionId,
       rawTitle,
@@ -480,7 +470,7 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
       metadata: { endpoint }
     });
 
-    sendIdempotentResponse(201, { projectId });
+    await sendIdempotentResponse(201, { projectId });
   };
 }
 
@@ -498,11 +488,11 @@ function createListProjectsHandler(db) {
     ORDER BY updated_at DESC;
   `);
 
-  return function handleListProjects(request, response) {
+  return async function handleListProjects(request, response) {
     const sessionId = getValidSessionId(request, response);
     if (!sessionId) return;
 
-    const rows = listProjectsStatement.all(sessionId);
+    const rows = await listProjectsStatement.all(sessionId);
     const projects = rows.map((row) => ({
       id: row.id,
       title: row.title,
@@ -583,7 +573,7 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
 
     let idempotencyRecord;
     try {
-      idempotencyRecord = idempotencyStore.claim({
+      idempotencyRecord = await idempotencyStore.claim({
         sessionId,
         endpoint,
         idempotencyKey,
@@ -621,8 +611,8 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
       return;
     }
 
-    const sendIdempotentResponse = (statusCode, payload) => {
-      idempotencyStore.saveResponse({
+    const sendIdempotentResponse = async (statusCode, payload) => {
+      await idempotencyStore.saveResponse({
         sessionId,
         endpoint,
         idempotencyKey,
@@ -632,17 +622,17 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
       sendJson(response, statusCode, payload);
     };
 
-    const project = findProjectBySessionStatement.get(projectId, sessionId);
+    const project = await findProjectBySessionStatement.get(projectId, sessionId);
     if (!project) {
-      sendIdempotentResponse(404, { error: PROJECT_NOT_FOUND_ERROR });
+      await sendIdempotentResponse(404, { error: PROJECT_NOT_FOUND_ERROR });
       return;
     }
 
-    const generationService = resolveGenerationService(sessionId);
+    const generationService = await resolveGenerationService(sessionId);
 
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     if (!prompt) {
-      sendIdempotentResponse(400, { error: INVALID_PROMPT_ERROR });
+      await sendIdempotentResponse(400, { error: INVALID_PROMPT_ERROR });
       return;
     }
 
@@ -655,7 +645,7 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
     let previewUrl = null;
     let generationResult = null;
     const currentVersionMeta = project.current_version_id
-      ? findCurrentVersionMetaStatement.get(project.current_version_id, projectId)
+      ? await findCurrentVersionMetaStatement.get(project.current_version_id, projectId)
       : null;
     const existingV0ChatId = extractExistingV0ChatId(currentVersionMeta?.provider_meta);
 
@@ -676,59 +666,54 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
 
     let versionNumber;
     try {
-      db.exec("BEGIN IMMEDIATE;");
-      const currentVersionRow = getCurrentVersionNumberStatement.get(projectId);
-      versionNumber = currentVersionRow.current_version_number + 1;
-      insertProjectVersionStatement.run(
-        projectVersionId,
-        projectId,
-        versionNumber,
-        prompt,
-        status,
-        previewUrl,
-        JSON.stringify(providerMeta),
-        now
-      );
-      insertPromptMessageStatement.run(
-        promptMessageId,
-        projectId,
-        projectVersionId,
-        "user",
-        prompt,
-        now
-      );
-      if (status === "success") {
-        const rawAssistant =
-          generationResult && typeof generationResult.assistantText === "string"
-            ? generationResult.assistantText.trim()
-            : "";
-        const assistantContent =
-          rawAssistant.length > 0 ? rawAssistant : GENERATION_ASSISTANT_FALLBACK_MESSAGE;
-        const assistantCreatedAt = new Date(new Date(now).getTime() + 1).toISOString();
-        insertPromptMessageStatement.run(
-          assistantPromptMessageId,
+      await db.transaction(async () => {
+        const currentVersionRow = await getCurrentVersionNumberStatement.get(projectId);
+        versionNumber = currentVersionRow.current_version_number + 1;
+        await insertProjectVersionStatement.run(
+          projectVersionId,
+          projectId,
+          versionNumber,
+          prompt,
+          status,
+          previewUrl,
+          JSON.stringify(providerMeta),
+          now
+        );
+        await insertPromptMessageStatement.run(
+          promptMessageId,
           projectId,
           projectVersionId,
-          "assistant",
-          assistantContent,
-          assistantCreatedAt
+          "user",
+          prompt,
+          now
         );
-        updateProjectCurrentVersionStatement.run(
-          projectVersionId,
-          now,
-          projectId,
-          projectVersionId,
-          projectId
-        );
-      }
-      db.exec("COMMIT;");
+        if (status === "success") {
+          const rawAssistant =
+            generationResult && typeof generationResult.assistantText === "string"
+              ? generationResult.assistantText.trim()
+              : "";
+          const assistantContent =
+            rawAssistant.length > 0 ? rawAssistant : GENERATION_ASSISTANT_FALLBACK_MESSAGE;
+          const assistantCreatedAt = new Date(new Date(now).getTime() + 1).toISOString();
+          await insertPromptMessageStatement.run(
+            assistantPromptMessageId,
+            projectId,
+            projectVersionId,
+            "assistant",
+            assistantContent,
+            assistantCreatedAt
+          );
+          await updateProjectCurrentVersionStatement.run(
+            projectVersionId,
+            now,
+            projectId,
+            projectVersionId,
+            projectId
+          );
+        }
+      });
     } catch {
-      try {
-        db.exec("ROLLBACK;");
-      } catch {
-        // noop: rollback can fail if transaction did not start.
-      }
-      sendIdempotentResponse(500, {
+      await sendIdempotentResponse(500, {
         error: {
           code: "INTERNAL_ERROR",
           message: "Could not create prompt and version."
@@ -756,7 +741,7 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
       }
     });
 
-    sendIdempotentResponse(201, {
+    await sendIdempotentResponse(201, {
       promptMessageId,
       projectVersionId,
       versionNumber,
@@ -787,17 +772,17 @@ function createListProjectMessagesHandler(db) {
     ORDER BY m.created_at ASC, m.id ASC;
   `);
 
-  return function handleListProjectMessages(request, response, projectId) {
+  return async function handleListProjectMessages(request, response, projectId) {
     const sessionId = getValidSessionId(request, response);
     if (!sessionId) return;
 
-    const project = findProjectBySessionStatement.get(projectId, sessionId);
+    const project = await findProjectBySessionStatement.get(projectId, sessionId);
     if (!project) {
       sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
       return;
     }
 
-    const rows = listMessagesStatement.all(projectId);
+    const rows = await listMessagesStatement.all(projectId);
     const messages = rows.map((row) => ({
       id: row.id,
       projectId: row.project_id,
@@ -829,17 +814,17 @@ function createListProjectVersionsHandler(db) {
     LIMIT 20;
   `);
 
-  return function handleListProjectVersions(request, response, projectId) {
+  return async function handleListProjectVersions(request, response, projectId) {
     const sessionId = getValidSessionId(request, response);
     if (!sessionId) return;
 
-    const project = findProjectBySessionStatement.get(projectId, sessionId);
+    const project = await findProjectBySessionStatement.get(projectId, sessionId);
     if (!project) {
       sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
       return;
     }
 
-    const rows = listVersionsStatement.all(projectId);
+    const rows = await listVersionsStatement.all(projectId);
     const versions = rows.map((row) => ({
       versionNumber: row.version_number,
       promptSnapshot: row.prompt_snapshot,
@@ -877,11 +862,11 @@ function createGetProjectPreviewHandler(db, telemetryStore) {
     WHERE project_id = ? AND version_number = ?;
   `);
 
-  return function handleGetProjectPreview(request, response, projectId, requestUrl) {
+  return async function handleGetProjectPreview(request, response, projectId, requestUrl) {
     const sessionId = getValidSessionId(request, response);
     if (!sessionId) return;
 
-    const project = findProjectBySessionStatement.get(projectId, sessionId);
+    const project = await findProjectBySessionStatement.get(projectId, sessionId);
     if (!project) {
       sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
       return;
@@ -900,7 +885,7 @@ function createGetProjectPreviewHandler(db, telemetryStore) {
         return;
       }
 
-      version = findVersionByIdStatement.get(project.current_version_id, projectId);
+      version = await findVersionByIdStatement.get(project.current_version_id, projectId);
       if (!version) {
         sendJson(response, 409, { error: PREVIEW_NOT_READY_ERROR });
         return;
@@ -913,7 +898,7 @@ function createGetProjectPreviewHandler(db, telemetryStore) {
         return;
       }
 
-      version = findVersionByNumberStatement.get(projectId, versionNumber);
+      version = await findVersionByNumberStatement.get(projectId, versionNumber);
       if (!version) {
         sendJson(response, 404, { error: VERSION_NOT_FOUND_ERROR });
         return;
@@ -965,9 +950,9 @@ function createGenerationServiceResolver({
 }) {
   const defaultProvider = generationProvider ?? createMockV0Provider();
 
-  return function resolveGenerationService(sessionId) {
+  return async function resolveGenerationService(sessionId) {
     if (sessionV0KeyStore?.isEnabled) {
-      const plain = sessionV0KeyStore.getDecryptedApiKey(sessionId);
+      const plain = await sessionV0KeyStore.getDecryptedApiKey(sessionId);
       if (typeof plain === "string" && plain.trim().length > 0) {
         const trimmed = plain.trim();
         const baseUrl =
@@ -999,7 +984,7 @@ function createV0IntegrationHandlers({
 
     const storageAvailable = Boolean(sessionV0KeyStore?.isEnabled);
     const sessionStatus = storageAvailable
-      ? sessionV0KeyStore.getStatus(sessionId)
+      ? await sessionV0KeyStore.getStatus(sessionId)
       : { configured: false, keyHint: null };
 
     sendJson(response, 200, {
@@ -1034,7 +1019,7 @@ function createV0IntegrationHandlers({
     }
 
     try {
-      sessionV0KeyStore.save(sessionId, apiKey);
+      await sessionV0KeyStore.save(sessionId, apiKey);
     } catch (error) {
       sendJson(response, 400, {
         error: {
@@ -1057,7 +1042,7 @@ function createV0IntegrationHandlers({
       return;
     }
 
-    sessionV0KeyStore.delete(sessionId);
+    await sessionV0KeyStore.delete(sessionId);
     sendJson(response, 204);
   }
 
@@ -1081,7 +1066,7 @@ function createV0IntegrationHandlers({
         sendJson(response, 503, { error: KEYSTORE_UNAVAILABLE_ERROR });
         return;
       }
-      candidate = sessionV0KeyStore.getDecryptedApiKey(sessionId);
+      candidate = await sessionV0KeyStore.getDecryptedApiKey(sessionId);
       if (!candidate?.trim()) {
         sendJson(response, 400, { error: NO_STORED_V0_KEY_ERROR });
         return;
@@ -1117,11 +1102,11 @@ function createV0IntegrationHandlers({
 }
 
 function createGetTelemetrySummaryHandler(telemetryStore) {
-  return function handleGetTelemetrySummary(request, response) {
+  return async function handleGetTelemetrySummary(request, response) {
     const sessionId = getValidSessionId(request, response);
     if (!sessionId) return;
 
-    const summary = telemetryStore.getSummary({ sessionId });
+    const summary = await telemetryStore.getSummary({ sessionId });
     sendJson(response, 200, summary);
   };
 }
@@ -1174,12 +1159,12 @@ export function createApp({
     }
 
     if (request.method === "GET" && path === "/projects") {
-      handleListProjects(request, response);
+      await handleListProjects(request, response);
       return;
     }
 
     if (request.method === "GET" && path === "/telemetry/summary") {
-      handleGetTelemetrySummary(request, response);
+      await handleGetTelemetrySummary(request, response);
       return;
     }
 
@@ -1211,19 +1196,19 @@ export function createApp({
 
     if (request.method === "GET" && listMessagesMatch) {
       const projectId = listMessagesMatch[1];
-      handleListProjectMessages(request, response, projectId);
+      await handleListProjectMessages(request, response, projectId);
       return;
     }
 
     if (request.method === "GET" && listVersionsMatch) {
       const projectId = listVersionsMatch[1];
-      handleListProjectVersions(request, response, projectId);
+      await handleListProjectVersions(request, response, projectId);
       return;
     }
 
     if (request.method === "GET" && projectPreviewMatch) {
       const projectId = projectPreviewMatch[1];
-      handleGetProjectPreview(request, response, projectId, requestUrl);
+      await handleGetProjectPreview(request, response, projectId, requestUrl);
       return;
     }
 

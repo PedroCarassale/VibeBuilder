@@ -17,7 +17,25 @@ En el dashboard del proyecto (**Settings → Environment Variables**) o con CLI:
 | `V0_API_KEY` | Recomendada | API key de [v0](https://v0.app/chat/settings/keys). Sin ella el backend usa el proveedor mock. |
 | `V0_KEYSTORE_SECRET` | Recomendada | Secreto ≥ 16 caracteres para cifrar keys v0 por sesión (`PUT /integrations/v0`). |
 | `V0_API_URL` | No | URL base del API v0 (default `https://api.v0.dev/v1`). |
-| `DB_PATH` | No | En Vercel, si no se define, se usa `/tmp/vibebuilder.db` (datos **no persistentes** entre cold starts). |
+| `TURSO_DATABASE_URL` | **Sí en producción** | La integración Turso en Vercel la crea al enlazar Storage. |
+| `TURSO_AUTH_TOKEN` | **Sí en producción** | Token de la base Turso (también la inyecta la integración). |
+| `DB_PATH` | No | Solo SQLite local; en Vercel sin Turso usa `/tmp` (datos **no persistentes**). |
+
+### Turso (integración Vercel Storage)
+
+El backend **ya incluye** `@libsql/client` y se conecta solo si existen `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN`. **No hace falta** copiar el ejemplo de Next.js (`export const POST = ...`) de la guía de Vercel: eso es para App Router; este proyecto usa `backend/src/database-connection.js`.
+
+Tras enlazar Turso en vercel.com:
+
+```bash
+cd backend
+npm install
+vercel env pull .env.development.local
+```
+
+Para desarrollo local, `bootstrap.js` carga `backend/.env` y luego `backend/.env.development.local` (variables de Turso).
+
+En producción, redeploy y revisá logs: debe aparecer `[database] Using Turso (libsql) for persistent storage.`
 
 Ejemplo con CLI (desde `backend/`):
 
@@ -105,10 +123,10 @@ Con backend en Vercel y `V0_KEYSTORE_SECRET` configurado:
 
 Si solo usas `V0_API_KEY` en el servidor (sin keystore por sesión), la generación usará la key del entorno de Vercel.
 
-## Limitaciones importantes (SQLite en serverless)
+## Limitaciones sin Turso (SQLite en `/tmp`)
 
-- En Vercel, SQLite vive en `/tmp` y **puede perderse** cuando la función se recicla (cold start).
-- Para un uso real en producción conviene migrar a **Turso**, **Neon** o **Vercel Postgres** (Delivery 2).
+- Sin `TURSO_DATABASE_URL`, cada instancia serverless tiene su propia DB vacía: `GET /projects` devuelve `[]` y los prompts fallan con *project not found*.
+- Con la integración Turso enlazada y el código actual desplegado, los datos persisten en la nube.
 - Las llamadas a v0 pueden tardar varios minutos; `vercel.json` fija `maxDuration: 300` (requiere plan que lo permita).
 
 ## 5. Resolución de problemas
