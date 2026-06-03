@@ -4,6 +4,7 @@ import com.vibebuilder.app.data.remote.ApiPreviewTarget
 import com.vibebuilder.app.data.remote.ApiProject
 import com.vibebuilder.app.data.remote.ApiProjectVersion
 import com.vibebuilder.app.data.remote.ApiPromptMessage
+import com.vibebuilder.app.data.remote.ApiPromptResponse
 import com.vibebuilder.app.data.remote.ApiRequestException
 import com.vibebuilder.app.data.remote.VibeBuilderApi
 import com.vibebuilder.app.domain.model.Project
@@ -85,30 +86,65 @@ class RemoteProjectRepository(
         mutex.withLock {
             if (projectsState.value.none { it.id == projectId }) error("Project $projectId not found")
             val normalizedPrompt = prompt.trim()
-            val response = api.sendPrompt(projectId = projectId, prompt = normalizedPrompt)
-            val newStatus = response.status.toDomainStatus()
+            val responseResult = runCatching {
+                api.sendPrompt(projectId = projectId, prompt = normalizedPrompt)
+            }
+            if (responseResult.isSuccess) {
+                return@withLock completePromptLocally(
+                    projectId,
+                    normalizedPrompt,
+                    responseResult.getOrThrow()
+                )
+            }
+            tryRecoverVersionAfterPromptNetworkError(projectId, normalizedPrompt)?.let { recovered ->
+                return@withLock recovered
+            }
+            throw responseResult.exceptionOrNull() ?: IOException("No se pudo enviar el prompt")
+        }
+
+    private suspend fun completePromptLocally(
+        projectId: String,
+        normalizedPrompt: String,
+        response: ApiPromptResponse
+    ): ProjectVersion {
+        val newStatus = response.status.toDomainStatus()
+        refreshProjectDetailFromBackend(projectId)
+        refreshFromBackend()
+
+        val newVersion = versionsState.value[projectId]
+            .orEmpty()
+            .firstOrNull { version -> version.id == response.projectVersionId }
+            ?: ProjectVersion(
+                id = response.projectVersionId,
+                projectId = projectId,
+                versionNumber = response.versionNumber,
+                prompt = normalizedPrompt,
+                previewHtml = previewPlaceholder(normalizedPrompt, response.versionNumber),
+                previewUrl = null,
+                createdAt = Clock.System.now(),
+                status = newStatus
+            )
+
+        if (newStatus == VersionStatus.FAILED) {
+            throw IOException(buildGenerationFailedMessage(response.providerMeta))
+        }
+        return newVersion
+    }
+
+    /** Si v0 terminó en el servidor pero el móvil cortó la conexión, recupera la versión desde Turso. */
+    private suspend fun tryRecoverVersionAfterPromptNetworkError(
+        projectId: String,
+        normalizedPrompt: String
+    ): ProjectVersion? {
+        runCatching {
             refreshProjectDetailFromBackend(projectId)
             refreshFromBackend()
-
-            val newVersion = versionsState.value[projectId]
-                .orEmpty()
-                .firstOrNull { version -> version.id == response.projectVersionId }
-                ?: ProjectVersion(
-                    id = response.projectVersionId,
-                    projectId = projectId,
-                    versionNumber = response.versionNumber,
-                    prompt = normalizedPrompt,
-                    previewHtml = previewPlaceholder(normalizedPrompt, response.versionNumber),
-                    previewUrl = null,
-                    createdAt = Clock.System.now(),
-                    status = newStatus
-                )
-
-            if (newStatus == VersionStatus.FAILED) {
-                throw IOException(buildGenerationFailedMessage(response.providerMeta))
-            }
-            newVersion
         }
+        return versionsState.value[projectId]
+            .orEmpty()
+            .filter { it.prompt.trim() == normalizedPrompt && it.status == VersionStatus.READY }
+            .maxByOrNull { it.versionNumber }
+    }
 
     override suspend fun getCurrentVersion(projectId: String): ProjectVersion? {
         val project = projectsState.value.firstOrNull { it.id == projectId } ?: return null

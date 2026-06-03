@@ -100,6 +100,13 @@ class HttpVibeBuilderApi(
     private val sessionIdProvider: SessionIdProvider
 ) : VibeBuilderApi {
 
+    private companion object {
+        /** v0 puede tardar varios minutos; el default de HttpURLConnection corta antes que Vercel (maxDuration 300s). */
+        const val PROMPT_READ_TIMEOUT_MS = 300_000
+        const val DEFAULT_CONNECT_TIMEOUT_MS = 30_000
+        const val DEFAULT_READ_TIMEOUT_MS = 60_000
+    }
+
     override suspend fun getProjects(): List<ApiProject> = withContext(Dispatchers.IO) {
         val response = request(
             method = "GET",
@@ -231,7 +238,8 @@ class HttpVibeBuilderApi(
         val response = request(
             method = "POST",
             path = "/projects/$projectId/prompts",
-            body = requestBody
+            body = requestBody,
+            readTimeoutMs = PROMPT_READ_TIMEOUT_MS
         )
         val payload = JSONObject(response.body)
         ApiPromptResponse(
@@ -283,10 +291,14 @@ class HttpVibeBuilderApi(
     private fun request(
         method: String,
         path: String,
-        body: String? = null
+        body: String? = null,
+        connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
+        readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS
     ): HttpResponse {
         val connection = (URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection).apply {
             requestMethod = method
+            connectTimeout = connectTimeoutMs
+            readTimeout = readTimeoutMs
             setRequestProperty("Accept", "application/json")
             setRequestProperty("X-Session-Id", sessionIdProvider.getSessionId())
             if (method == "POST" || method == "PUT" || method == "PATCH") {
@@ -310,9 +322,22 @@ class HttpVibeBuilderApi(
                 throw parseError(responseBody, statusCode)
             }
             HttpResponse(statusCode = statusCode, body = responseBody)
+        } catch (error: IOException) {
+            throw IOException(mapNetworkFailure(error), error)
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun mapNetworkFailure(error: IOException): String {
+        val raw = error.message?.trim().orEmpty()
+        if (raw.contains("timeout", ignoreCase = true) || error is java.net.SocketTimeoutException) {
+            return "La generación tardó demasiado y la conexión se cortó. Reintentá: si v0 ya terminó, el historial puede haberse guardado."
+        }
+        if (raw.equals("Internal Server Error", ignoreCase = true)) {
+            return "El servidor tardó en responder (generación larga). Reintentá o abrí Historial para ver si la versión ya está guardada."
+        }
+        return if (raw.isNotEmpty()) raw else "Error de red al contactar el backend"
     }
 
     private fun parseError(responseBody: String, statusCode: Int): ApiRequestException {
