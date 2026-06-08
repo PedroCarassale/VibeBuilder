@@ -6,7 +6,6 @@ Definir **qué se construye ahora** y **qué no se construye ahora** para Delive
 
 Este alcance está alineado con:
 - `AGENTS.md` (prioridad Delivery 1 y producto mobile-first),
-- `docs/current-state.md` (estado actual mayormente mockeado),
 - `docs/product-requirements.md` (requerimientos REQ-001 a REQ-012).
 
 ## Horizonte de alcance
@@ -128,4 +127,3 @@ La fase se considera cumplida cuando un usuario puede, desde Android y con datos
 5. Ver historial básico de versiones y mensajes persistidos.
 
 Si alguno de estos cinco pasos no funciona de punta a punta, Delivery 1 no está cerrado.
-
