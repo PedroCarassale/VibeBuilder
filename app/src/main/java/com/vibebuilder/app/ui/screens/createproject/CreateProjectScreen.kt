@@ -2,36 +2,35 @@ package com.vibebuilder.app.ui.screens.createproject
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vibebuilder.app.R
 import com.vibebuilder.app.ui.components.AppCard
+import com.vibebuilder.app.ui.components.AppTextField
+import com.vibebuilder.app.ui.components.AppTopBar
+import com.vibebuilder.app.ui.components.PrimaryButton
+import com.vibebuilder.app.ui.components.SectionHeader
+import com.vibebuilder.app.ui.components.StatusBanner
+import com.vibebuilder.app.ui.theme.AppSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -53,8 +52,8 @@ fun CreateProjectScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.create_project_title)) },
+            AppTopBar(
+                title = stringResource(R.string.create_project_title),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -62,13 +61,7 @@ fun CreateProjectScreen(
                             contentDescription = stringResource(R.string.back_cd)
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
+                }
             )
         }
     ) { padding ->
@@ -77,56 +70,64 @@ fun CreateProjectScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(
+                    horizontal = AppSpacing.screenHorizontal,
+                    vertical = AppSpacing.screenVertical
+                ),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)
         ) {
-            AppCard(modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = state.title,
-                    onValueChange = viewModel::onTitleChange,
-                    label = { Text(stringResource(R.string.create_project_name_label)) },
-                    singleLine = true,
-                    isError = state.titleError != null,
-                    supportingText = state.titleError?.let { { Text(it) } },
-                    modifier = Modifier.fillMaxWidth()
+            SectionHeader(
+                title = stringResource(R.string.create_project_header_title),
+                subtitle = stringResource(R.string.create_project_header_subtitle)
+            )
+
+            AppCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(AppSpacing.xl)
+            ) {
+                Text(
+                    text = stringResource(R.string.create_project_details_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
 
-                Spacer(Modifier.height(4.dp))
+                AppTextField(
+                    value = state.title,
+                    onValueChange = viewModel::onTitleChange,
+                    label = stringResource(R.string.create_project_name_label),
+                    singleLine = true,
+                    isError = state.titleError != null,
+                    supportingText = state.titleError,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = AppSpacing.lg)
+                )
 
-                OutlinedTextField(
+                AppTextField(
                     value = state.description,
                     onValueChange = viewModel::onDescriptionChange,
-                    label = { Text(stringResource(R.string.create_project_description_label)) },
+                    label = stringResource(R.string.create_project_description_label),
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = AppSpacing.md)
                 )
 
                 if (state.submitError != null) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = state.submitError!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodyMedium
+                    StatusBanner(
+                        message = state.submitError!!,
+                        isError = true,
+                        modifier = Modifier.padding(top = AppSpacing.md)
                     )
                 }
 
-                Spacer(Modifier.height(12.dp))
-
-                Button(
+                PrimaryButton(
+                    text = stringResource(R.string.create_project_submit),
                     onClick = viewModel::submit,
                     enabled = state.canSubmit,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    if (state.isSubmitting) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.height(20.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    } else {
-                        Text(stringResource(R.string.create_project_submit))
-                    }
-                }
+                    isLoading = state.isSubmitting,
+                    modifier = Modifier.padding(top = AppSpacing.lg)
+                )
             }
         }
     }

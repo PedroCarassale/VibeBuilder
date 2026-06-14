@@ -1,0 +1,4 @@
+interface:
+  display_name: "VibeBuilder Compose UI Style"
+  short_description: "Apply VibeBuilder's Compose design system to new screens."
+  default_prompt: "Create or refactor a VibeBuilder Jetpack Compose screen using the established design system."

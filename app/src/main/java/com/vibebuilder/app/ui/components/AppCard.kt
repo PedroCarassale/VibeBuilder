@@ -11,22 +11,26 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardColors
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CardElevation
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.dp
+import com.vibebuilder.app.ui.theme.AppShapes
+import com.vibebuilder.app.ui.theme.AppSpacing
 
 @Composable
 fun AppCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    shape: Shape = MaterialTheme.shapes.medium,
+    shape: Shape = AppShapes.card,
     containerColor: Color = MaterialTheme.colorScheme.surface,
-    borderColor: Color = MaterialTheme.colorScheme.outline,
+    borderColor: Color = MaterialTheme.colorScheme.outlineVariant,
     colors: CardColors? = null,
-    contentPadding: PaddingValues = PaddingValues(16.dp),
+    elevation: CardElevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    contentPadding: PaddingValues = PaddingValues(AppSpacing.cardPadding),
     expandInnerHeight: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -45,7 +49,8 @@ fun AppCard(
         modifier = cardModifier,
         shape = shape,
         colors = resolvedColors,
-        border = border
+        border = border,
+        elevation = elevation
     ) {
         Column(innerColumnModifier) {
             content()

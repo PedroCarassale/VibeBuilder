@@ -3,10 +3,18 @@ package com.vibebuilder.app.ui.screens.projectdetail
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -14,11 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SecondaryTabRow
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -27,13 +31,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vibebuilder.app.R
+import com.vibebuilder.app.ui.components.AppTopBar
 import com.vibebuilder.app.ui.components.ErrorView
 import com.vibebuilder.app.ui.components.LoadingView
+import com.vibebuilder.app.ui.theme.AppShapes
+import com.vibebuilder.app.ui.theme.AppSpacing
 
 private enum class DetailTab { Prompt, Preview, History }
 
@@ -75,12 +87,10 @@ fun ProjectDetailScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = {
-                    val title = (uiState as? ProjectDetailUiState.Content)?.data?.project?.title
-                        ?: stringResource(R.string.app_name)
-                    Text(title)
-                },
+            val title = (uiState as? ProjectDetailUiState.Content)?.data?.project?.title
+                ?: stringResource(R.string.app_name)
+            AppTopBar(
+                title = title,
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -88,13 +98,7 @@ fun ProjectDetailScreen(
                             contentDescription = stringResource(R.string.back_cd)
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
+                }
             )
         }
     ) { padding ->
@@ -110,21 +114,10 @@ fun ProjectDetailScreen(
                     ErrorView(message = "Proyecto no encontrado: ${current.projectId}")
                 is ProjectDetailUiState.Content -> {
                     Column(modifier = Modifier.fillMaxSize()) {
-                        SecondaryTabRow(
+                        DetailTabBar(
                             selectedTabIndex = selectedTab,
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                        ) {
-                            DetailTab.entries.forEachIndexed { index, tab ->
-                                Tab(
-                                    selected = selectedTab == index,
-                                    onClick = { selectedTab = index },
-                                    text = { Text(stringResource(tab.labelResource())) },
-                                    selectedContentColor = MaterialTheme.colorScheme.primary,
-                                    unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                            onTabSelected = { selectedTab = it }
+                        )
 
                         Box(modifier = Modifier.weight(1f)) {
                             when (DetailTab.entries[selectedTab]) {
@@ -184,4 +177,62 @@ private fun DetailTab.labelResource(): Int = when (this) {
     DetailTab.Prompt -> R.string.project_detail_tab_prompt
     DetailTab.Preview -> R.string.project_detail_tab_preview
     DetailTab.History -> R.string.project_detail_tab_history
+}
+
+@Composable
+private fun DetailTabBar(
+    selectedTabIndex: Int,
+    onTabSelected: (Int) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(
+                horizontal = AppSpacing.screenHorizontal,
+                vertical = AppSpacing.md
+            )
+            .clip(AppShapes.pill)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(AppSpacing.xs),
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.xs)
+    ) {
+        DetailTab.entries.forEachIndexed { index, tab ->
+            val selected = selectedTabIndex == index
+            val containerColor by animateColorAsState(
+                targetValue = if (selected) {
+                    MaterialTheme.colorScheme.surface
+                } else {
+                    Color.Transparent
+                },
+                label = "detailTabContainer"
+            )
+            val contentColor by animateColorAsState(
+                targetValue = if (selected) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                label = "detailTabContent"
+            )
+
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 40.dp)
+                    .clip(AppShapes.pill)
+                    .background(containerColor)
+                    .clickable { onTabSelected(index) }
+                    .padding(horizontal = AppSpacing.sm, vertical = AppSpacing.sm),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = stringResource(tab.labelResource()),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
 }

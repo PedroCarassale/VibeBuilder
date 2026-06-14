@@ -22,12 +22,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Button
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,6 +43,14 @@ import com.vibebuilder.app.R
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.VersionStatus
 import com.vibebuilder.app.ui.components.AppCard
+import com.vibebuilder.app.ui.components.EmptyView
+import com.vibebuilder.app.ui.components.PrimaryButton
+import com.vibebuilder.app.ui.components.SecondaryButton
+import com.vibebuilder.app.ui.components.SectionHeader
+import com.vibebuilder.app.ui.components.StatusBanner
+import com.vibebuilder.app.ui.components.StatusPill
+import com.vibebuilder.app.ui.theme.AppShapes
+import com.vibebuilder.app.ui.theme.AppSpacing
 import com.vibebuilder.app.ui.util.QrCodeEncoder
 
 @Composable
@@ -60,13 +65,10 @@ fun PreviewTab(
     onRetryResolvePreview: () -> Unit
 ) {
     if (currentVersion == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                text = stringResource(R.string.preview_placeholder_subtitle),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        EmptyView(
+            title = stringResource(R.string.preview_placeholder_title),
+            subtitle = stringResource(R.string.preview_placeholder_subtitle)
+        )
         return
     }
 
@@ -90,29 +92,30 @@ fun PreviewTab(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+            .padding(
+                horizontal = AppSpacing.screenHorizontal,
+                vertical = AppSpacing.screenVertical
+            ),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.md)
     ) {
-        Text(
-            text = stringResource(R.string.preview_placeholder_title),
-            style = MaterialTheme.typography.titleLarge
-        )
-        Text(
-            text = "Versión ${currentVersion.versionNumber}",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary
+        SectionHeader(
+            title = stringResource(R.string.preview_placeholder_title),
+            subtitle = stringResource(R.string.preview_help_text),
+            action = {
+                StatusPill(text = stringResource(R.string.prompt_version_format, currentVersion.versionNumber))
+            }
         )
 
         AppCard(
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(12.dp)
+            contentPadding = PaddingValues(AppSpacing.lg)
         ) {
             Text(
-                text = "Prompt",
+                text = stringResource(R.string.preview_prompt_label),
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(AppSpacing.xs))
             Text(
                 text = currentVersion.prompt,
                 style = MaterialTheme.typography.bodyMedium,
@@ -127,7 +130,7 @@ fun PreviewTab(
                 .fillMaxWidth()
                 .weight(1f)
                 .fillMaxHeight(),
-            shape = MaterialTheme.shapes.medium,
+            shape = AppShapes.cardLarge,
             contentPadding = PaddingValues(0.dp),
             expandInnerHeight = true
         ) {
@@ -155,14 +158,15 @@ fun PreviewTab(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
-                        Spacer(Modifier.height(12.dp))
-                        Button(onClick = {
-                            hasError = false
-                            isLoading = true
-                            webViewRef?.reload()
-                        }) {
-                            Text(text = stringResource(R.string.retry))
-                        }
+                        Spacer(Modifier.height(AppSpacing.md))
+                        SecondaryButton(
+                            text = stringResource(R.string.retry),
+                            onClick = {
+                                hasError = false
+                                isLoading = true
+                                webViewRef?.reload()
+                            }
+                        )
                     }
                 }
 
@@ -274,38 +278,31 @@ fun PreviewTab(
                             textAlign = TextAlign.Center
                         )
                         if (previewResolution.error != null) {
-                            Spacer(Modifier.height(12.dp))
-                            Button(onClick = onRetryResolvePreview) {
-                                Text(text = stringResource(R.string.retry))
-                            }
+                            Spacer(Modifier.height(AppSpacing.md))
+                            SecondaryButton(
+                                text = stringResource(R.string.retry),
+                                onClick = onRetryResolvePreview
+                            )
                         }
                     }
                 }
             }
         }
 
-        Text(
-            text = stringResource(R.string.preview_help_text),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Button(
+        PrimaryButton(
+            text = if (isOpeningExternal) {
+                stringResource(R.string.preview_opening_browser)
+            } else {
+                stringResource(R.string.preview_open_in_browser)
+            },
             onClick = {
                 onDismissExternalFeedback()
                 onOpenInBrowser()
             },
             enabled = !isOpeningExternal,
+            isLoading = isOpeningExternal,
             modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = if (isOpeningExternal) {
-                    stringResource(R.string.preview_opening_browser)
-                } else {
-                    stringResource(R.string.preview_open_in_browser)
-                }
-            )
-        }
+        )
 
         val resolvedErrorMessage = when (externalError) {
             PreviewExternalError.NotReady -> stringResource(R.string.preview_not_ready)
@@ -319,27 +316,12 @@ fun PreviewTab(
         }
 
         if (resolvedErrorMessage != null) {
-            AppCard(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer
-                ),
-                borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
-                contentPadding = PaddingValues(12.dp)
-            ) {
-                Text(
-                    text = resolvedErrorMessage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-                TextButton(
-                    onClick = onDismissExternalFeedback,
-                    modifier = Modifier.align(Alignment.End)
-                ) {
-                    Text(text = stringResource(R.string.dismiss))
-                }
-            }
+            StatusBanner(
+                message = resolvedErrorMessage,
+                isError = true,
+                actionLabel = stringResource(R.string.dismiss),
+                onAction = onDismissExternalFeedback
+            )
         }
     }
 }

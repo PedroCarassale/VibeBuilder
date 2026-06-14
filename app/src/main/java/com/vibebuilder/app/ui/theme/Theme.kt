@@ -67,7 +67,7 @@ fun VibeBuilderTheme(
     val colorScheme = if (darkTheme) DarkColors else LightColors
     MaterialTheme(
         colorScheme = colorScheme,
-        typography = VibeTypography,
+        typography = AppTypography,
         shapes = VibeShapes,
         content = content
     )
