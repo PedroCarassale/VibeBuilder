@@ -4,29 +4,21 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +34,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vibebuilder.app.R
 import com.vibebuilder.app.ui.components.AppCard
+import com.vibebuilder.app.ui.components.AppTextField
+import com.vibebuilder.app.ui.components.AppTopBar
+import com.vibebuilder.app.ui.components.GhostButton
+import com.vibebuilder.app.ui.components.PrimaryButton
+import com.vibebuilder.app.ui.components.SecondaryButton
+import com.vibebuilder.app.ui.components.SectionHeader
+import com.vibebuilder.app.ui.components.StatusBanner
+import com.vibebuilder.app.ui.theme.AppSpacing
 
 private const val V0_KEYS_URL = "https://v0.app/chat/settings/keys"
 
@@ -58,8 +58,8 @@ fun V0IntegrationScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text(stringResource(R.string.v0_settings_title)) },
+            AppTopBar(
+                title = stringResource(R.string.v0_settings_title),
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -67,13 +67,7 @@ fun V0IntegrationScreen(
                             contentDescription = stringResource(R.string.back_cd)
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurface
-                )
+                }
             )
         }
     ) { padding ->
@@ -81,31 +75,50 @@ fun V0IntegrationScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(
+                    horizontal = AppSpacing.screenHorizontal,
+                    vertical = AppSpacing.screenVertical
+                )
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.lg)
         ) {
-            AppCard(modifier = Modifier.fillMaxWidth()) {
+            SectionHeader(
+                title = stringResource(R.string.v0_settings_header_title),
+                subtitle = stringResource(R.string.v0_settings_header_subtitle)
+            )
+
+            AppCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(AppSpacing.xl)
+            ) {
                 Text(
                     text = stringResource(R.string.v0_settings_intro),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                Spacer(Modifier.height(8.dp))
-
-                TextButton(
+                GhostButton(
+                    text = stringResource(R.string.v0_settings_open_keys_page),
                     onClick = {
                         context.startActivity(
                             Intent(Intent.ACTION_VIEW, Uri.parse(V0_KEYS_URL))
                         )
                     },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(stringResource(R.string.v0_settings_open_keys_page))
-                }
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = AppSpacing.sm)
+                )
+            }
 
-                Spacer(Modifier.height(8.dp))
+            AppCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(AppSpacing.xl)
+            ) {
+                Text(
+                    text = stringResource(R.string.v0_settings_status_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
 
                 SelectionContainer {
                     val envYes = stringResource(R.string.v0_settings_yes)
@@ -123,95 +136,89 @@ fun V0IntegrationScreen(
                             if (state.keyStorageAvailable) envYes else envNo,
                             sessionLine
                         ),
+                        modifier = Modifier.padding(top = AppSpacing.sm),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            OutlinedTextField(
+            AppTextField(
                 value = state.apiKeyInput,
                 onValueChange = viewModel::onApiKeyChange,
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.v0_settings_api_key_label)) },
-                placeholder = { Text(stringResource(R.string.v0_settings_api_key_placeholder)) },
+                label = stringResource(R.string.v0_settings_api_key_label),
+                placeholder = stringResource(R.string.v0_settings_api_key_placeholder),
                 visualTransformation = if (passwordVisible) {
                     VisualTransformation.None
                 } else {
                     PasswordVisualTransformation()
                 },
                 trailingIcon = {
-                    TextButton(onClick = { passwordVisible = !passwordVisible }) {
-                        Text(
-                            if (passwordVisible) stringResource(R.string.v0_settings_hide)
-                            else stringResource(R.string.v0_settings_show)
-                        )
-                    }
+                    GhostButton(
+                        text = if (passwordVisible) {
+                            stringResource(R.string.v0_settings_hide)
+                        } else {
+                            stringResource(R.string.v0_settings_show)
+                        },
+                        onClick = { passwordVisible = !passwordVisible }
+                    )
                 },
                 singleLine = true,
                 enabled = !state.loading
             )
 
             if (state.loading) {
-                CircularProgressIndicator(modifier = Modifier.padding(vertical = 8.dp))
+                StatusBanner(message = stringResource(R.string.loading))
             }
 
-            Button(
+            PrimaryButton(
+                text = stringResource(R.string.v0_settings_save),
                 onClick = viewModel::saveKey,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.loading && state.keyStorageAvailable
-            ) {
-                Text(stringResource(R.string.v0_settings_save))
-            }
+            )
 
-            OutlinedButton(
+            SecondaryButton(
+                text = stringResource(R.string.v0_settings_test_field),
                 onClick = { viewModel.testConnection(useInputField = true) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.loading && state.apiKeyInput.isNotBlank()
-            ) {
-                Text(stringResource(R.string.v0_settings_test_field))
-            }
+            )
 
-            OutlinedButton(
+            SecondaryButton(
+                text = stringResource(R.string.v0_settings_test_saved),
                 onClick = { viewModel.testConnection(useInputField = false) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.loading && state.sessionKeyConfigured
-            ) {
-                Text(stringResource(R.string.v0_settings_test_saved))
-            }
+            )
 
-            OutlinedButton(
+            SecondaryButton(
+                text = stringResource(R.string.v0_settings_clear),
                 onClick = viewModel::clearSavedKey,
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !state.loading && state.sessionKeyConfigured && state.keyStorageAvailable
-            ) {
-                Text(stringResource(R.string.v0_settings_clear))
-            }
+            )
 
             state.statusMessage?.let { msg ->
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = msg,
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                StatusBanner(message = msg)
             }
 
             state.errorMessage?.let { err ->
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = err,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                StatusBanner(message = err, isError = true)
             }
 
-            Spacer(Modifier.height(24.dp))
-            Text(
-                text = stringResource(R.string.v0_settings_footer_note),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            AppCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(AppSpacing.lg),
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    text = stringResource(R.string.v0_settings_footer_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.vibebuilder.app.ui.screens.projectdetail
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,14 +20,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -42,6 +41,13 @@ import androidx.compose.ui.unit.dp
 import com.vibebuilder.app.R
 import com.vibebuilder.app.domain.model.PromptMessage
 import com.vibebuilder.app.ui.components.AppCard
+import com.vibebuilder.app.ui.components.AppTextField
+import com.vibebuilder.app.ui.components.PrimaryButton
+import com.vibebuilder.app.ui.components.PrimaryIconButton
+import com.vibebuilder.app.ui.components.StatusBanner
+import com.vibebuilder.app.ui.components.StatusPill
+import com.vibebuilder.app.ui.theme.AppShapes
+import com.vibebuilder.app.ui.theme.AppSpacing
 import kotlinx.coroutines.delay
 import kotlinx.datetime.Clock
 
@@ -133,9 +139,17 @@ fun PromptTab(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(
+                    horizontal = AppSpacing.screenHorizontal,
+                    vertical = AppSpacing.md
+                ),
+            verticalArrangement = Arrangement.spacedBy(AppSpacing.md)
         ) {
+            if (userMessages.isEmpty() && !input.isSending) {
+                item(key = "prompt-empty") {
+                    PromptEmptyCard()
+                }
+            }
             items(items = userMessages, key = { it.id }) { message ->
                 UserMessageBubble(message = message)
             }
@@ -160,46 +174,31 @@ fun PromptTab(
         }
 
         if (input.sendError != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = input.sendError,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+            StatusBanner(
+                message = input.sendError,
+                isError = true,
+                actionLabel = stringResource(R.string.retry),
+                onAction = onRetry,
+                actionEnabled = input.canSend,
+                modifier = Modifier.padding(
+                    horizontal = AppSpacing.screenHorizontal,
+                    vertical = AppSpacing.xs
                 )
-                TextButton(onClick = onRetry, enabled = input.canSend) {
-                    Text(stringResource(R.string.retry))
-                }
-            }
+            )
         }
 
         val resolvedPreviewError = resolvePreviewErrorMessage(previewError, previewErrorMessage)
         if (resolvedPreviewError != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = resolvedPreviewError,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+            StatusBanner(
+                message = resolvedPreviewError,
+                isError = true,
+                actionLabel = stringResource(R.string.dismiss),
+                onAction = onDismissPreviewFeedback,
+                modifier = Modifier.padding(
+                    horizontal = AppSpacing.screenHorizontal,
+                    vertical = AppSpacing.xs
                 )
-                TextButton(onClick = onDismissPreviewFeedback) {
-                    Text(stringResource(R.string.dismiss))
-                }
-            }
+            )
         }
 
         PromptInputBar(
@@ -213,27 +212,53 @@ fun PromptTab(
 }
 
 @Composable
-private fun ThinkingIndicator(verb: String, ellipsis: String) {
-    val shape = MaterialTheme.shapes.large
-    Row(
+private fun PromptEmptyCard() {
+    AppCard(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(vertical = AppSpacing.xl),
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentPadding = PaddingValues(AppSpacing.xxl)
     ) {
-        CircularProgressIndicator(
-            strokeWidth = 2.dp,
-            modifier = Modifier.size(18.dp),
-            color = MaterialTheme.colorScheme.primary
-        )
-        Spacer(Modifier.width(12.dp))
         Text(
-            text = verb + ellipsis,
-            style = MaterialTheme.typography.bodyLarge,
+            text = stringResource(R.string.prompt_empty_title),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(AppSpacing.sm))
+        Text(
+            text = stringResource(R.string.prompt_empty_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun ThinkingIndicator(verb: String, ellipsis: String) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth(),
+        shape = AppShapes.card,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = AppSpacing.lg, vertical = AppSpacing.md),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(18.dp),
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(AppSpacing.md))
+            Text(
+                text = verb + ellipsis,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -252,24 +277,22 @@ private fun resolvePreviewErrorMessage(
 
 @Composable
 private fun UserMessageBubble(message: PromptMessage) {
-    val shape = MaterialTheme.shapes.medium
-
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .fillMaxWidth(0.92f)
                 .widthIn(max = 520.dp)
-                .clip(shape)
+                .clip(AppShapes.card)
                 .background(MaterialTheme.colorScheme.primary)
-                .padding(horizontal = 14.dp, vertical = 10.dp)
+                .padding(horizontal = AppSpacing.lg, vertical = AppSpacing.md)
         ) {
             Text(
                 text = stringResource(R.string.prompt_user_label),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.92f)
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.78f)
             )
-            Spacer(Modifier.height(2.dp))
+            Spacer(Modifier.height(AppSpacing.xs))
             Text(
                 text = message.content,
                 style = MaterialTheme.typography.bodyMedium,
@@ -291,48 +314,47 @@ private fun AssistantAppReadyCard(
         shape = MaterialTheme.shapes.large,
         containerColor = MaterialTheme.colorScheme.surface,
         borderColor = MaterialTheme.colorScheme.outlineVariant,
-        contentPadding = PaddingValues(16.dp)
+        contentPadding = PaddingValues(AppSpacing.lg)
     ) {
-        Text(
-            text = stringResource(R.string.prompt_assistant_label),
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(AppSpacing.md),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.prompt_assistant_label),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            StatusPill(text = stringResource(R.string.prompt_version_format, versionNumber))
+        }
+        Spacer(Modifier.height(AppSpacing.md))
         Text(
             text = stringResource(R.string.prompt_assistant_app_ready),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurface
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(AppSpacing.xs))
         Text(
             text = stringResource(R.string.prompt_assistant_app_ready_subtitle),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = stringResource(R.string.prompt_version_format, versionNumber),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Spacer(Modifier.height(12.dp))
-        Button(
+        PrimaryButton(
+            text = if (isOpeningPreview) {
+                stringResource(R.string.preview_opening_browser)
+            } else {
+                stringResource(R.string.preview_open_in_browser)
+            },
             onClick = {
                 onDismissPreviewFeedback()
                 onOpenPreviewInBrowser(versionNumber)
             },
             enabled = !isOpeningPreview,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text(
-                text = if (isOpeningPreview) {
-                    stringResource(R.string.preview_opening_browser)
-                } else {
-                    stringResource(R.string.preview_open_in_browser)
-                }
-            )
-        }
+            isLoading = isOpeningPreview,
+            modifier = Modifier.padding(top = AppSpacing.lg)
+        )
     }
 }
 
@@ -344,27 +366,38 @@ private fun PromptInputBar(
     onChange: (String) -> Unit,
     onSend: () -> Unit
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.Bottom
-    ) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onChange,
-            modifier = Modifier.weight(1f),
-            placeholder = { Text(stringResource(R.string.prompt_input_placeholder)) },
-            minLines = 1,
-            maxLines = 5,
-            enabled = !isSending
-        )
-        Spacer(Modifier.width(8.dp))
-        IconButton(onClick = onSend, enabled = canSend) {
-            Icon(
-                Icons.AutoMirrored.Filled.Send,
-                contentDescription = stringResource(R.string.prompt_send_cd)
-            )
+    Column(modifier = Modifier.fillMaxWidth()) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = AppSpacing.screenHorizontal,
+                        vertical = AppSpacing.md
+                    ),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)
+            ) {
+                AppTextField(
+                    value = value,
+                    onValueChange = onChange,
+                    modifier = Modifier.weight(1f),
+                    placeholder = stringResource(R.string.prompt_input_placeholder),
+                    minLines = 1,
+                    maxLines = 5,
+                    enabled = !isSending
+                )
+                PrimaryIconButton(onClick = onSend, enabled = canSend) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = stringResource(R.string.prompt_send_cd)
+                    )
+                }
+            }
         }
     }
 }

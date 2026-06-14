@@ -3,13 +3,19 @@
 
     <!-- Project list -->
     <string name="project_list_title">Mis proyectos</string>
+    <string name="project_list_header_title">Construye desde una idea</string>
+    <string name="project_list_header_subtitle">Crea, previsualiza e itera web apps generadas por IA desde tu teléfono.</string>
     <string name="project_list_empty_title">Aún no tienes proyectos</string>
     <string name="project_list_empty_subtitle">Crea tu primer proyecto y descríbelo con un prompt para que la IA arme una web app.</string>
     <string name="project_list_create_cta">Crear proyecto</string>
     <string name="project_list_fab_cd">Crear nuevo proyecto</string>
+    <string name="project_card_tagline">Proyecto generado con IA</string>
 
     <!-- Create project -->
     <string name="create_project_title">Nuevo proyecto</string>
+    <string name="create_project_header_title">Define la base</string>
+    <string name="create_project_header_subtitle">Ponle un nombre claro. Luego podrás iterar la app desde el chat del proyecto.</string>
+    <string name="create_project_details_title">Detalles del proyecto</string>
     <string name="create_project_name_label">Nombre del proyecto</string>
     <string name="create_project_description_label">Descripción corta (opcional)</string>
     <string name="create_project_initial_prompt_label">Prompt inicial</string>
@@ -31,6 +37,8 @@
     <string name="prompt_assistant_app_ready">Tu app ya está lista.</string>
     <string name="prompt_assistant_app_ready_subtitle">Ábrela en el navegador para verla a pantalla completa y compartirla.</string>
     <string name="prompt_thinking_cd">Generando respuesta</string>
+    <string name="prompt_empty_title">Listo para iterar</string>
+    <string name="prompt_empty_subtitle">Escribe una mejora, una pantalla nueva o un cambio visual para crear la próxima versión.</string>
 
     <string-array name="prompt_thinking_verbs">
         <item>Pensando</item>
@@ -66,6 +74,7 @@
     </string-array>
     <string name="preview_placeholder_title">Vista previa</string>
     <string name="preview_placeholder_subtitle">Aquí se mostrará la web app generada (placeholder).</string>
+    <string name="preview_prompt_label">Prompt</string>
     <string name="preview_not_ready">La preview estará disponible cuando la generación termine con éxito.</string>
     <string name="preview_url_unavailable">No hay URL de preview disponible para esta versión.</string>
     <string name="preview_load_failed">No se pudo cargar la preview. Verifica la URL o tu conexión y vuelve a intentar.</string>
@@ -79,11 +88,17 @@
     <string name="preview_external_no_browser">No se encontró una app de navegador para abrir la preview.</string>
     <string name="preview_external_unknown">No se pudo abrir la preview en el navegador.</string>
     <string name="history_empty">Aún no hay versiones para este proyecto.</string>
+    <string name="history_title">Historial de versiones</string>
+    <string name="history_subtitle">Cada prompt exitoso crea una versión nueva para revisar el progreso del proyecto.</string>
+    <string name="history_empty_title">Sin versiones todavía</string>
     <string name="history_latest_success">Última success</string>
     <string name="history_status_format">Estado: %1$s</string>
 
     <!-- v0 integration -->
     <string name="v0_settings_title">Integración v0</string>
+    <string name="v0_settings_header_title">Conecta tu generación</string>
+    <string name="v0_settings_header_subtitle">Guarda una API key de v0 para generar previews reales desde el backend.</string>
+    <string name="v0_settings_status_title">Estado de conexión</string>
     <string name="v0_settings_intro">La Platform API de v0 usa una API key que creas en tu cuenta (no se sustituye solo por iniciar sesión en Vercel). Puedes usar la key del servidor (V0_API_KEY) o guardar la tuya en este dispositivo: solo el backend la ve, cifrada.</string>
     <string name="v0_settings_open_keys_page">Abrir v0 → Ajustes → API keys</string>
     <string name="v0_settings_status_block">V0_API_KEY en el servidor: %1$s\nGuardado por sesión en servidor: %2$s\nKey propia (esta sesión): %3$s</string>
