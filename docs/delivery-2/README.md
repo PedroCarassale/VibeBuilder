@@ -12,6 +12,7 @@ This folder turns the Delivery 2 goals into implementation topics for the curren
 6. [Improved version history](./06-improved-version-history.md)
 7. [Error handling and observability](./07-error-handling-and-observability.md)
 8. [Testing and release readiness](./08-testing-and-release-readiness.md)
+9. [Mock or Supabase database architecture](./09-mock-or-supabase-architecture.md)
 
 The order is intentional. Regeneration, preview, and history should use a stable version/artifact model rather than adding temporary behavior around `previewUrl` only.
 
