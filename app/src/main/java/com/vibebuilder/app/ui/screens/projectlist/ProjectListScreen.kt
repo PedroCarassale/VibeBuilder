@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +15,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
@@ -21,11 +26,19 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -49,9 +62,20 @@ fun ProjectListScreen(
     onCreateProject: () -> Unit,
     onOpenV0Settings: () -> Unit,
     onProjectClick: (String) -> Unit,
+    deletionConfirmed: Boolean = false,
+    onDeletionConfirmationShown: () -> Unit = {},
     viewModel: ProjectListViewModel = viewModel(factory = ProjectListViewModel.Factory)
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val context = LocalContext.current
+
+    LaunchedEffect(deletionConfirmed) {
+        if (deletionConfirmed) {
+            snackbarHostState.showSnackbar(context.getString(R.string.project_delete_success))
+            onDeletionConfirmationShown()
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -68,6 +92,7 @@ fun ProjectListScreen(
                 }
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = onCreateProject,
@@ -98,16 +123,28 @@ fun ProjectListScreen(
                     onRetry = viewModel::retry
                 )
                 is ProjectListUiState.Content -> {
-                    if (current.projects.isEmpty()) {
+                    if (current.totalCount == 0) {
                         EmptyView(
                             title = stringResource(R.string.project_list_empty_title),
                             subtitle = stringResource(R.string.project_list_empty_subtitle),
                             actionLabel = stringResource(R.string.project_list_create_cta),
                             onAction = onCreateProject
                         )
+                    } else if (current.projects.isEmpty()) {
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            ProjectControls(current.query, current.sort, viewModel::onSearchQueryChange, viewModel::onSortChange)
+                            EmptyView(
+                                title = stringResource(R.string.project_list_no_matches_title),
+                                subtitle = stringResource(R.string.project_list_no_matches_subtitle)
+                            )
+                        }
                     } else {
                         ProjectList(
                             projects = current.projects,
+                            query = current.query,
+                            sort = current.sort,
+                            onQueryChange = viewModel::onSearchQueryChange,
+                            onSortChange = viewModel::onSortChange,
                             onProjectClick = onProjectClick
                         )
                     }
@@ -120,6 +157,10 @@ fun ProjectListScreen(
 @Composable
 private fun ProjectList(
     projects: List<Project>,
+    query: String,
+    sort: ProjectSort,
+    onQueryChange: (String) -> Unit,
+    onSortChange: (ProjectSort) -> Unit,
     onProjectClick: (String) -> Unit
 ) {
     LazyColumn(
@@ -137,11 +178,59 @@ private fun ProjectList(
                 modifier = Modifier.padding(bottom = AppSpacing.sm)
             )
         }
+        item { ProjectControls(query, sort, onQueryChange, onSortChange) }
         items(items = projects, key = { it.id }) { project ->
             ProjectCard(project = project, onClick = { onProjectClick(project.id) })
         }
         item { Spacer(Modifier.height(80.dp)) }
     }
+}
+
+@Composable
+private fun ProjectControls(
+    query: String,
+    sort: ProjectSort,
+    onQueryChange: (String) -> Unit,
+    onSortChange: (ProjectSort) -> Unit
+) {
+    var sortExpanded by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = AppSpacing.screenHorizontal, vertical = AppSpacing.sm),
+        horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            modifier = Modifier.weight(1f),
+            singleLine = true,
+            label = { Text(stringResource(R.string.project_list_search_label)) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
+        )
+        Box {
+            IconButton(onClick = { sortExpanded = true }) {
+                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.project_list_sort_cd))
+            }
+            DropdownMenu(expanded = sortExpanded, onDismissRequest = { sortExpanded = false }) {
+                ProjectSort.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(option.labelResource())) },
+                        onClick = {
+                            onSortChange(option)
+                            sortExpanded = false
+                        },
+                        leadingIcon = { if (option == sort) Text("✓") }
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun ProjectSort.labelResource(): Int = when (this) {
+    ProjectSort.RecentlyUpdated -> R.string.project_sort_recently_updated
+    ProjectSort.NameAscending -> R.string.project_sort_name
+    ProjectSort.NewestCreated -> R.string.project_sort_newest_created
 }
 
 @Composable

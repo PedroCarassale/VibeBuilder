@@ -15,6 +15,7 @@ data class CreateProjectFormState(
     val title: String = "",
     val description: String = "",
     val titleError: String? = null,
+    val descriptionError: String? = null,
     val isSubmitting: Boolean = false,
     val submitError: String? = null,
     val createdProjectId: String? = null
@@ -35,14 +36,21 @@ class CreateProjectViewModel(
     }
 
     fun onDescriptionChange(value: String) {
-        _state.update { it.copy(description = value, submitError = null) }
+        _state.update { it.copy(description = value, descriptionError = null, submitError = null) }
     }
 
     fun submit() {
         val current = _state.value
-        val titleError = if (current.title.isBlank()) "El nombre es requerido" else null
-        if (titleError != null) {
-            _state.update { it.copy(titleError = titleError) }
+        val titleError = when {
+            current.title.isBlank() -> "El nombre es requerido"
+            current.title.trim().length > 100 -> "El nombre no puede superar 100 caracteres"
+            else -> null
+        }
+        val descriptionError = if (current.description.trim().length > 500) {
+            "La descripción no puede superar 500 caracteres"
+        } else null
+        if (titleError != null || descriptionError != null) {
+            _state.update { it.copy(titleError = titleError, descriptionError = descriptionError) }
             return
         }
 

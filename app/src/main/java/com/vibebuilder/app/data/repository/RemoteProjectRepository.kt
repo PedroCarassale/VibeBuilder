@@ -82,6 +82,26 @@ class RemoteProjectRepository(
         projectsState.value.firstOrNull { it.id == projectId } ?: project
     }
 
+    override suspend fun updateProject(
+        projectId: String,
+        title: String,
+        description: String
+    ): Project = mutex.withLock {
+        val existing = projectsState.value.firstOrNull { it.id == projectId }
+            ?: error("Project $projectId not found")
+        val updated = api.updateProject(projectId, title.trim(), description.trim())
+            .toDomain(existing.currentVersionNumber)
+        upsertProject(updated)
+        updated
+    }
+
+    override suspend fun deleteProject(projectId: String) = mutex.withLock {
+        api.deleteProject(projectId)
+        projectsState.value = projectsState.value.filterNot { it.id == projectId }
+        versionsState.value = versionsState.value - projectId
+        messagesState.value = messagesState.value - projectId
+    }
+
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion =
         mutex.withLock {
             if (projectsState.value.none { it.id == projectId }) error("Project $projectId not found")
@@ -205,7 +225,7 @@ class RemoteProjectRepository(
             val localProject = projectsState.value.firstOrNull { project -> project.id == apiProject.id }
             apiProject.toDomain(currentVersionNumber = localProject?.currentVersionNumber)
         }
-        projectsState.value = mergeRemoteWithLocal(remoteProjects)
+        projectsState.value = remoteProjects
     }
 
     private suspend fun refreshProjectDetailFromBackend(projectId: String) {
@@ -231,12 +251,6 @@ class RemoteProjectRepository(
                 )
             )
         }
-    }
-
-    private fun mergeRemoteWithLocal(remoteProjects: List<Project>): List<Project> {
-        val remoteById = remoteProjects.associateBy { it.id }
-        val localOnly = projectsState.value.filter { local -> remoteById[local.id] == null }
-        return remoteProjects + localOnly
     }
 
     private fun upsertProject(project: Project) {

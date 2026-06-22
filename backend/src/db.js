@@ -21,7 +21,8 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
       description TEXT,
       current_version_id TEXT,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_projects_session_id
@@ -112,7 +113,16 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
     db.exec("ALTER TABLE project_versions ADD COLUMN preview_url TEXT;");
   }
 
+  const projectColumns = db.prepare("PRAGMA table_info(projects);").all();
+  const hasDeletedAtColumn = projectColumns.some((column) => column.name === "deleted_at");
+  if (!hasDeletedAtColumn) {
+    db.exec("ALTER TABLE projects ADD COLUMN deleted_at TEXT;");
+  }
+
   db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_projects_active_session_updated
+      ON projects (session_id, updated_at DESC)
+      WHERE deleted_at IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_versions_project_version_unique
       ON project_versions (project_id, version_number);
   `);

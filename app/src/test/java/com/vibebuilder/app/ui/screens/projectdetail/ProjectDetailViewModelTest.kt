@@ -113,6 +113,65 @@ class ProjectDetailViewModelTest {
         assertEquals(PromptSendStatus.Success, viewModel.promptInput.value.sendStatus)
     }
 
+    @Test
+    fun editProject_validaLimites_yActualizaProyecto() = runTest(dispatcher) {
+        val repository = DetailFakeRepository()
+        val viewModel = ProjectDetailViewModel(PROJECT_ID, repository)
+        val project = repository.projects.value.first()
+        viewModel.showEditProject(project)
+        viewModel.onEditTitleChange(" ")
+        viewModel.onEditDescriptionChange("x".repeat(501))
+
+        viewModel.saveProjectEdit()
+        assertEquals(EditProjectValidationError.Required, viewModel.editProjectState.value.titleError)
+        assertEquals(EditProjectValidationError.TooLong, viewModel.editProjectState.value.descriptionError)
+        assertEquals(0, repository.updateCalls)
+
+        viewModel.onEditTitleChange("Renombrado")
+        viewModel.onEditDescriptionChange("")
+        viewModel.saveProjectEdit()
+        advanceUntilIdle()
+
+        assertEquals(1, repository.updateCalls)
+        assertEquals("Renombrado", repository.projects.value.first().title)
+        assertTrue(!viewModel.editProjectState.value.isVisible)
+    }
+
+    @Test
+    fun editProject_falloConservaEntrada() = runTest(dispatcher) {
+        val repository = DetailFakeRepository().apply { failUpdate = true }
+        val viewModel = ProjectDetailViewModel(PROJECT_ID, repository)
+        viewModel.showEditProject(repository.projects.value.first())
+        viewModel.onEditTitleChange("Intento")
+        viewModel.saveProjectEdit()
+        advanceUntilIdle()
+
+        assertEquals("Intento", viewModel.editProjectState.value.title)
+        assertNotNull(viewModel.editProjectState.value.errorMessage)
+        assertTrue(viewModel.editProjectState.value.isVisible)
+    }
+
+    @Test
+    fun deleteProject_cancelacionExitoYFallo() = runTest(dispatcher) {
+        val repository = DetailFakeRepository()
+        val viewModel = ProjectDetailViewModel(PROJECT_ID, repository)
+        viewModel.showDeleteProject()
+        viewModel.dismissDeleteProject()
+        assertEquals(0, repository.deleteCalls)
+
+        viewModel.showDeleteProject()
+        repository.failDelete = true
+        viewModel.deleteProject()
+        advanceUntilIdle()
+        assertNotNull(viewModel.deleteProjectState.value.errorMessage)
+        assertTrue(viewModel.deleteProjectState.value.isVisible)
+
+        repository.failDelete = false
+        viewModel.deleteProject()
+        advanceUntilIdle()
+        assertTrue(viewModel.deleteProjectState.value.succeeded)
+    }
+
     companion object {
         private const val PROJECT_ID = "project-1"
     }
@@ -120,7 +179,7 @@ class ProjectDetailViewModelTest {
 
 private class DetailFakeRepository : ProjectRepository {
     private val now = Clock.System.now()
-    private val projects = MutableStateFlow(
+    val projects = MutableStateFlow(
         listOf(
             Project(
                 id = "project-1",
@@ -139,6 +198,10 @@ private class DetailFakeRepository : ProjectRepository {
         private set
     var failNextSend: Boolean = false
     var sendGate: CompletableDeferred<Unit>? = null
+    var updateCalls = 0
+    var deleteCalls = 0
+    var failUpdate = false
+    var failDelete = false
 
     override fun observeProjects(): Flow<List<Project>> = projects
 
@@ -153,6 +216,23 @@ private class DetailFakeRepository : ProjectRepository {
 
     override suspend fun createProject(title: String, description: String): Project {
         throw NotImplementedError("No requerido para esta prueba")
+    }
+
+    override suspend fun updateProject(projectId: String, title: String, description: String): Project {
+        updateCalls += 1
+        if (failUpdate) throw IOException("No se pudo editar")
+        val existing = projects.value.first { it.id == projectId }
+        val updated = existing.copy(title = title, description = description)
+        projects.value = projects.value.map { if (it.id == projectId) updated else it }
+        return updated
+    }
+
+    override suspend fun deleteProject(projectId: String) {
+        deleteCalls += 1
+        if (failDelete) throw IOException("No se pudo eliminar")
+        projects.value = projects.value.filterNot { it.id == projectId }
+        versions.value = versions.value - projectId
+        messages.value = messages.value - projectId
     }
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion {

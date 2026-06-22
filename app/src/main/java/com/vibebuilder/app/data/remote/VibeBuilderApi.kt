@@ -80,6 +80,8 @@ interface VibeBuilderApi {
     ): ApiProjectPreview
     suspend fun getProjectMessages(projectId: String): List<ApiPromptMessage>
     suspend fun createProject(title: String, description: String): String
+    suspend fun updateProject(projectId: String, title: String, description: String): ApiProject
+    suspend fun deleteProject(projectId: String)
     suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse
 
     suspend fun getV0IntegrationStatus(): ApiV0IntegrationStatus
@@ -144,6 +146,24 @@ class HttpVibeBuilderApi(
         )
         val payload = JSONObject(response.body)
         payload.getString("projectId")
+    }
+
+    override suspend fun updateProject(
+        projectId: String,
+        title: String,
+        description: String
+    ): ApiProject = withContext(Dispatchers.IO) {
+        val response = request(
+            method = "PATCH",
+            path = "/projects/$projectId",
+            body = JSONObject().put("title", title).put("description", description).toString()
+        )
+        JSONObject(response.body).toApiProject()
+    }
+
+    override suspend fun deleteProject(projectId: String) = withContext(Dispatchers.IO) {
+        request(method = "DELETE", path = "/projects/$projectId")
+        Unit
     }
 
     override suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion> = withContext(Dispatchers.IO) {
@@ -365,6 +385,15 @@ class HttpVibeBuilderApi(
         val body: String
     )
 }
+
+private fun JSONObject.toApiProject() = ApiProject(
+    id = getString("id"),
+    title = getString("title"),
+    description = optStringOrNull("description"),
+    currentVersionId = optStringOrNull("currentVersionId"),
+    createdAt = getString("createdAt"),
+    updatedAt = getString("updatedAt")
+)
 
 private fun JSONObject.optStringOrNull(key: String): String? =
     if (!has(key) || isNull(key)) null else optString(key)

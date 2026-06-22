@@ -27,6 +27,10 @@ interface ProjectRepository {
         description: String
     ): Project
 
+    suspend fun updateProject(projectId: String, title: String, description: String): Project
+
+    suspend fun deleteProject(projectId: String)
+
     suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion
 
     suspend fun getCurrentVersion(projectId: String): ProjectVersion?

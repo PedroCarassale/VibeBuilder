@@ -71,6 +71,31 @@ class MockProjectRepository : ProjectRepository {
         project
     }
 
+    override suspend fun updateProject(
+        projectId: String,
+        title: String,
+        description: String
+    ): Project = mutex.withLock {
+        delay(SIMULATED_LATENCY_MS)
+        val existing = projectsState.value.firstOrNull { it.id == projectId }
+            ?: error("Project $projectId not found")
+        val updated = existing.copy(
+            title = title.trim(),
+            description = description.trim(),
+            updatedAt = Clock.System.now()
+        )
+        projectsState.value = projectsState.value.map { if (it.id == projectId) updated else it }
+        updated
+    }
+
+    override suspend fun deleteProject(projectId: String) = mutex.withLock {
+        delay(SIMULATED_LATENCY_MS)
+        if (projectsState.value.none { it.id == projectId }) error("Project $projectId not found")
+        projectsState.value = projectsState.value.filterNot { it.id == projectId }
+        versionsState.value = versionsState.value - projectId
+        messagesState.value = messagesState.value - projectId
+    }
+
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion =
         mutex.withLock {
             delay(SIMULATED_LATENCY_MS)

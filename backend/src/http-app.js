@@ -28,7 +28,15 @@ const IDEMPOTENCY_KEY_IN_PROGRESS_ERROR = {
 };
 const INVALID_TITLE_ERROR = {
   code: "INVALID_TITLE",
-  message: "title must be a non-empty string."
+  message: "title must be a string between 1 and 100 characters."
+};
+const INVALID_DESCRIPTION_ERROR = {
+  code: "INVALID_DESCRIPTION",
+  message: "description must be a string no longer than 500 characters."
+};
+const INVALID_PROJECT_UPDATE_ERROR = {
+  code: "INVALID_PROJECT_UPDATE",
+  message: "Body must contain only title and/or description."
 };
 const INVALID_JSON_ERROR = {
   code: "INVALID_JSON",
@@ -324,6 +332,54 @@ function normalizeDescription(value) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function validateProjectFields(body, { partial = false } = {}) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { error: partial ? INVALID_PROJECT_UPDATE_ERROR : INVALID_TITLE_ERROR };
+  }
+
+  const supportedFields = new Set(["title", "description"]);
+  const fields = Object.keys(body);
+  if (partial && (fields.length === 0 || fields.some((field) => !supportedFields.has(field)))) {
+    return { error: INVALID_PROJECT_UPDATE_ERROR };
+  }
+
+  const hasTitle = Object.hasOwn(body, "title");
+  const hasDescription = Object.hasOwn(body, "description");
+  if ((!partial || hasTitle) && typeof body.title !== "string") {
+    return { error: INVALID_TITLE_ERROR };
+  }
+
+  const title = hasTitle ? body.title.trim() : undefined;
+  if (hasTitle && (title.length < 1 || title.length > 100)) {
+    return { error: INVALID_TITLE_ERROR };
+  }
+  const optionalNullDescription = !partial && body.description === null;
+  if (hasDescription && !optionalNullDescription &&
+      (typeof body.description !== "string" || body.description.trim().length > 500)) {
+    return { error: INVALID_DESCRIPTION_ERROR };
+  }
+
+  return {
+    value: {
+      hasTitle,
+      title,
+      hasDescription,
+      description: hasDescription ? normalizeDescription(body.description) : undefined
+    }
+  };
+}
+
+function mapProject(row) {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    currentVersionId: row.current_version_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
 function sanitizeTelemetryMetadata(metadata) {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     return {};
@@ -445,9 +501,9 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
       sendJson(response, statusCode, payload);
     };
 
-    const rawTitle = typeof body.title === "string" ? body.title.trim() : "";
-    if (!rawTitle) {
-      await sendIdempotentResponse(400, { error: INVALID_TITLE_ERROR });
+    const validation = validateProjectFields(body);
+    if (validation.error) {
+      await sendIdempotentResponse(400, { error: validation.error });
       return;
     }
 
@@ -456,8 +512,8 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
     await insertProjectStatement.run(
       projectId,
       sessionId,
-      rawTitle,
-      normalizeDescription(body.description),
+      validation.value.title,
+      validation.value.hasDescription ? validation.value.description : null,
       null,
       now,
       now
@@ -484,7 +540,7 @@ function createListProjectsHandler(db) {
       created_at,
       updated_at
     FROM projects
-    WHERE session_id = ?
+    WHERE session_id = ? AND deleted_at IS NULL
     ORDER BY updated_at DESC;
   `);
 
@@ -493,16 +549,77 @@ function createListProjectsHandler(db) {
     if (!sessionId) return;
 
     const rows = await listProjectsStatement.all(sessionId);
-    const projects = rows.map((row) => ({
-      id: row.id,
-      title: row.title,
-      description: row.description,
-      currentVersionId: row.current_version_id,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at
-    }));
+    const projects = rows.map(mapProject);
 
     sendJson(response, 200, projects);
+  };
+}
+
+function createUpdateProjectHandler(db) {
+  const updateProjectStatement = db.prepare(`
+    UPDATE projects
+    SET
+      title = CASE WHEN ? = 1 THEN ? ELSE title END,
+      description = CASE WHEN ? = 1 THEN ? ELSE description END,
+      updated_at = ?
+    WHERE id = ? AND session_id = ? AND deleted_at IS NULL
+    RETURNING id, title, description, current_version_id, created_at, updated_at;
+  `);
+
+  return async function handleUpdateProject(request, response, projectId) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    let body;
+    try {
+      body = await parseJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: INVALID_JSON_ERROR });
+      return;
+    }
+
+    const validation = validateProjectFields(body, { partial: true });
+    if (validation.error) {
+      sendJson(response, 400, { error: validation.error });
+      return;
+    }
+
+    const fields = validation.value;
+    const row = await updateProjectStatement.get(
+      fields.hasTitle ? 1 : 0,
+      fields.title ?? null,
+      fields.hasDescription ? 1 : 0,
+      fields.description ?? null,
+      new Date().toISOString(),
+      projectId,
+      sessionId
+    );
+    if (!row) {
+      sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+    sendJson(response, 200, mapProject(row));
+  };
+}
+
+function createDeleteProjectHandler(db) {
+  const deleteProjectStatement = db.prepare(`
+    UPDATE projects
+    SET deleted_at = ?, updated_at = ?
+    WHERE id = ? AND session_id = ? AND deleted_at IS NULL
+    RETURNING id;
+  `);
+
+  return async function handleDeleteProject(request, response, projectId) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+    const now = new Date().toISOString();
+    const deleted = await deleteProjectStatement.get(now, now, projectId, sessionId);
+    if (!deleted) {
+      sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+    sendJson(response, 204);
   };
 }
 
@@ -510,7 +627,7 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
   const findProjectBySessionStatement = db.prepare(`
     SELECT id, current_version_id
     FROM projects
-    WHERE id = ? AND session_id = ?;
+    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
   `);
   const findCurrentVersionMetaStatement = db.prepare(`
     SELECT provider_meta
@@ -548,6 +665,7 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
     UPDATE projects
     SET current_version_id = ?, updated_at = ?
     WHERE id = ?
+      AND deleted_at IS NULL
       AND EXISTS (
         SELECT 1
         FROM project_versions
@@ -755,7 +873,7 @@ function createListProjectMessagesHandler(db) {
   const findProjectBySessionStatement = db.prepare(`
     SELECT id
     FROM projects
-    WHERE id = ? AND session_id = ?;
+    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
   `);
   const listMessagesStatement = db.prepare(`
     SELECT
@@ -800,7 +918,7 @@ function createListProjectVersionsHandler(db) {
   const findProjectBySessionStatement = db.prepare(`
     SELECT id
     FROM projects
-    WHERE id = ? AND session_id = ?;
+    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
   `);
   const listVersionsStatement = db.prepare(`
     SELECT
@@ -839,7 +957,7 @@ function createGetProjectPreviewHandler(db, telemetryStore) {
   const findProjectBySessionStatement = db.prepare(`
     SELECT id, current_version_id
     FROM projects
-    WHERE id = ? AND session_id = ?;
+    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
   `);
   const findVersionByIdStatement = db.prepare(`
     SELECT
@@ -1122,6 +1240,8 @@ export function createApp({
   const telemetryStore = createTelemetryStore(db);
   const handleCreateProject = createProjectHandler(db, idempotencyStore, telemetryStore);
   const handleListProjects = createListProjectsHandler(db);
+  const handleUpdateProject = createUpdateProjectHandler(db);
+  const handleDeleteProject = createDeleteProjectHandler(db);
   const defaultGenerationProvider = generationProvider ?? createMockV0Provider();
   const resolveGenerationService = createGenerationServiceResolver({
     sessionV0KeyStore,
@@ -1152,6 +1272,7 @@ export function createApp({
     const listMessagesMatch = /^\/projects\/([^/]+)\/messages$/.exec(path);
     const listVersionsMatch = /^\/projects\/([^/]+)\/versions$/.exec(path);
     const projectPreviewMatch = /^\/projects\/([^/]+)\/preview$/.exec(path);
+    const projectMatch = /^\/projects\/([^/]+)$/.exec(path);
 
     if (request.method === "POST" && path === "/projects") {
       await handleCreateProject(request, response, path);
@@ -1160,6 +1281,16 @@ export function createApp({
 
     if (request.method === "GET" && path === "/projects") {
       await handleListProjects(request, response);
+      return;
+    }
+
+    if (request.method === "PATCH" && projectMatch) {
+      await handleUpdateProject(request, response, projectMatch[1]);
+      return;
+    }
+
+    if (request.method === "DELETE" && projectMatch) {
+      await handleDeleteProject(request, response, projectMatch[1]);
       return;
     }
 
