@@ -33,6 +33,12 @@ interface ProjectRepository {
 
     suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion
 
+    suspend fun regenerateVersion(
+        projectId: String,
+        versionId: String,
+        correctedPrompt: String? = null
+    ): ProjectVersion
+
     suspend fun getCurrentVersion(projectId: String): ProjectVersion?
 
     suspend fun resolvePreviewUrl(

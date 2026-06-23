@@ -33,11 +33,19 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
       project_id TEXT NOT NULL,
       version_number INTEGER NOT NULL,
       prompt_snapshot TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('success', 'failed')),
+      status TEXT NOT NULL CHECK (
+        status IN ('queued', 'generating', 'validating', 'success', 'failed', 'cancelled')
+      ),
       preview_url TEXT,
       provider_meta TEXT,
+      source_version_id TEXT,
+      attempt_number INTEGER NOT NULL DEFAULT 1,
+      failure_code TEXT,
+      started_at TEXT,
+      completed_at TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (source_version_id) REFERENCES project_versions(id) ON DELETE SET NULL,
       UNIQUE(project_id, version_number)
     );
 
@@ -141,6 +149,15 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
   `);
 
   const projectVersionColumns = db.prepare("PRAGMA table_info(project_versions);").all();
+  const projectVersionsSchema = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'project_versions';")
+    .get();
+  const projectVersionsSql = projectVersionsSchema?.sql ?? "";
+  const hasExpandedStatusCheck =
+    projectVersionsSql.includes("'queued'") &&
+    projectVersionsSql.includes("'generating'") &&
+    projectVersionsSql.includes("'validating'") &&
+    projectVersionsSql.includes("'cancelled'");
   const hasProviderMetaColumn = projectVersionColumns.some(
     (column) => column.name === "provider_meta"
   );
@@ -155,6 +172,75 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
     db.exec("ALTER TABLE project_versions ADD COLUMN preview_url TEXT;");
   }
 
+  const refreshedProjectVersionColumns = db.prepare("PRAGMA table_info(project_versions);").all();
+  const hasRegenerationColumns = ["source_version_id", "attempt_number", "failure_code", "started_at", "completed_at"].every(
+    (name) => refreshedProjectVersionColumns.some((column) => column.name === name)
+  );
+  if (!hasExpandedStatusCheck || !hasRegenerationColumns) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      CREATE TABLE project_versions_new (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        version_number INTEGER NOT NULL,
+        prompt_snapshot TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+          status IN ('queued', 'generating', 'validating', 'success', 'failed', 'cancelled')
+        ),
+        preview_url TEXT,
+        provider_meta TEXT,
+        source_version_id TEXT,
+        attempt_number INTEGER NOT NULL DEFAULT 1,
+        failure_code TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (source_version_id) REFERENCES project_versions(id) ON DELETE SET NULL,
+        UNIQUE(project_id, version_number)
+      );
+      INSERT INTO project_versions_new (
+        id,
+        project_id,
+        version_number,
+        prompt_snapshot,
+        status,
+        preview_url,
+        provider_meta,
+        source_version_id,
+        attempt_number,
+        failure_code,
+        started_at,
+        completed_at,
+        created_at
+      )
+      SELECT
+        id,
+        project_id,
+        version_number,
+        prompt_snapshot,
+        CASE
+          WHEN status IN ('queued', 'generating', 'validating', 'success', 'failed', 'cancelled') THEN status
+          ELSE 'failed'
+        END,
+        preview_url,
+        provider_meta,
+        NULL,
+        1,
+        CASE
+          WHEN provider_meta IS NOT NULL AND json_valid(provider_meta) THEN json_extract(provider_meta, '$.errorCode')
+          ELSE NULL
+        END,
+        created_at,
+        created_at,
+        created_at
+      FROM project_versions;
+      DROP TABLE project_versions;
+      ALTER TABLE project_versions_new RENAME TO project_versions;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+
   const projectColumns = db.prepare("PRAGMA table_info(projects);").all();
   const hasDeletedAtColumn = projectColumns.some((column) => column.name === "deleted_at");
   if (!hasDeletedAtColumn) {
@@ -167,6 +253,8 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
       WHERE deleted_at IS NULL;
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_versions_project_version_unique
       ON project_versions (project_id, version_number);
+    CREATE INDEX IF NOT EXISTS idx_project_versions_source_version_id
+      ON project_versions (source_version_id);
   `);
 
   return db;

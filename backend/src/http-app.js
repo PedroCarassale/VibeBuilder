@@ -57,6 +57,10 @@ const VERSION_NOT_FOUND_ERROR = {
   code: "VERSION_NOT_FOUND",
   message: "Project version not found."
 };
+const VERSION_NOT_REGENERABLE_ERROR = {
+  code: "VERSION_NOT_REGENERABLE",
+  message: "Only failed project versions can be regenerated."
+};
 const INVALID_PREVIEW_QUERY_ERROR = {
   code: "INVALID_PREVIEW_QUERY",
   message: "Invalid preview query. Use target=current|version and versionNumber for target=version."
@@ -626,9 +630,8 @@ function createDeleteProjectHandler(db) {
   };
 }
 
-function createCreatePromptHandler(
+function createGenerationAttemptExecutor(
   db,
-  idempotencyStore,
   telemetryStore,
   resolveGenerationService,
   artifactService
@@ -667,8 +670,13 @@ function createCreatePromptHandler(
       status,
       preview_url,
       provider_meta,
+      source_version_id,
+      attempt_number,
+      failure_code,
+      started_at,
+      completed_at,
       created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
   `);
   const updateProjectCurrentVersionStatement = db.prepare(`
     UPDATE projects
@@ -684,6 +692,210 @@ function createCreatePromptHandler(
       );
   `);
 
+  return async function executeGenerationAttempt({
+    sessionId,
+    projectId,
+    prompt,
+    sourceVersionId = null,
+    attemptNumber = 1
+  }) {
+    const project = await findProjectBySessionStatement.get(projectId, sessionId);
+    if (!project) {
+      return { type: "not_found" };
+    }
+
+    const generationService = await resolveGenerationService(sessionId);
+
+    const promptMessageId = randomUUID();
+    const assistantPromptMessageId = randomUUID();
+    const projectVersionId = randomUUID();
+    const startedAt = new Date().toISOString();
+    let completedAt = startedAt;
+    let status = "success";
+    let providerMeta = null;
+    let previewUrl = null;
+    let generationResult = null;
+    let preparedArtifact = null;
+    const currentVersionMeta = project.current_version_id
+      ? await findCurrentVersionMetaStatement.get(project.current_version_id, projectId)
+      : null;
+    const existingV0ChatId = extractExistingV0ChatId(currentVersionMeta?.provider_meta);
+
+    try {
+      generationResult = await generationService.provider.generate({
+        projectId,
+        prompt,
+        sessionId,
+        chatId: generationService.provider.name === "v0" ? existingV0ChatId : null
+      });
+
+      providerMeta = normalizeProviderMeta(generationResult.providerMeta, generationService.provider.name);
+      previewUrl = extractPreviewUrl(providerMeta);
+
+      if (generationResult.artifactSource) {
+        try {
+          preparedArtifact = await artifactService.prepareArtifactPayload({
+            projectId,
+            sessionId,
+            artifactSource: generationResult.artifactSource
+          });
+          if (preparedArtifact?.artifactSource?.previewUrl) {
+            previewUrl = preparedArtifact.artifactSource.previewUrl;
+            providerMeta.previewUrl = previewUrl;
+          }
+        } catch (error) {
+          status = "failed";
+          providerMeta = mapArtifactErrorMeta(error, generationService.provider.name, providerMeta);
+        }
+      } else {
+        status = "failed";
+        providerMeta = {
+          ...providerMeta,
+          errorType: "artifact_error",
+          errorCode: "ARTIFACT_SOURCE_MISSING",
+          retryable: true
+        };
+      }
+    } catch (error) {
+      status = "failed";
+      providerMeta = mapProviderErrorMeta(error, generationService.provider.name);
+    } finally {
+      completedAt = new Date().toISOString();
+    }
+
+    let versionNumber;
+    try {
+      await db.transaction(async (tx) => {
+        const currentVersionRow = await getCurrentVersionNumberStatement.get(projectId);
+        versionNumber = currentVersionRow.current_version_number + 1;
+        await insertProjectVersionStatement.run(
+          projectVersionId,
+          projectId,
+          versionNumber,
+          prompt,
+          status,
+          previewUrl,
+          JSON.stringify(providerMeta),
+          sourceVersionId,
+          attemptNumber,
+          providerMeta?.errorCode ?? null,
+          startedAt,
+          completedAt,
+          startedAt
+        );
+
+        if (status === "success" && preparedArtifact) {
+          try {
+            await artifactService.insertPreparedArtifact(tx, {
+              versionId: projectVersionId,
+              prepared: preparedArtifact
+            });
+          } catch (error) {
+            status = "failed";
+            providerMeta = mapArtifactErrorMeta(
+              error,
+              generationService.provider.name,
+              providerMeta
+            );
+            await tx
+              .prepare(
+                `UPDATE project_versions
+                 SET status = ?, provider_meta = ?, failure_code = ?, preview_url = ?, completed_at = ?
+                 WHERE id = ? AND project_id = ?;`
+              )
+              .run(
+                "failed",
+                JSON.stringify(providerMeta),
+                providerMeta?.errorCode ?? null,
+                previewUrl,
+                new Date().toISOString(),
+                projectVersionId,
+                projectId
+              );
+            await artifactService.cleanupPreparedArtifact(preparedArtifact);
+            preparedArtifact = null;
+          }
+        }
+
+        await insertPromptMessageStatement.run(
+          promptMessageId,
+          projectId,
+          projectVersionId,
+          "user",
+          prompt,
+          startedAt
+        );
+        if (status === "success") {
+          const rawAssistant =
+            generationResult && typeof generationResult.assistantText === "string"
+              ? generationResult.assistantText.trim()
+              : "";
+          const assistantContent =
+            rawAssistant.length > 0 ? rawAssistant : GENERATION_ASSISTANT_FALLBACK_MESSAGE;
+          const assistantCreatedAt = new Date(new Date(startedAt).getTime() + 1).toISOString();
+          await insertPromptMessageStatement.run(
+            assistantPromptMessageId,
+            projectId,
+            projectVersionId,
+            "assistant",
+            assistantContent,
+            assistantCreatedAt
+          );
+          await updateProjectCurrentVersionStatement.run(
+            projectVersionId,
+            completedAt,
+            projectId,
+            projectVersionId,
+            projectId
+          );
+        }
+      });
+    } catch {
+      if (preparedArtifact) {
+        await artifactService.cleanupPreparedArtifact(preparedArtifact);
+      }
+      return { type: "error" };
+    }
+
+    safelyTrackTelemetry(telemetryStore, {
+      eventName: "iterate",
+      sessionId,
+      projectId,
+      versionId: projectVersionId,
+      metadata: { versionNumber, status }
+    });
+    safelyTrackTelemetry(telemetryStore, {
+      eventName: status === "success" ? "generate" : "fail",
+      sessionId,
+      projectId,
+      versionId: projectVersionId,
+      metadata: {
+        versionNumber,
+        status,
+        errorCode: providerMeta?.errorCode ?? null
+      }
+    });
+
+    return {
+      type: "created",
+      payload: {
+        promptMessageId,
+        projectVersionId,
+        versionNumber,
+        status,
+        providerMeta,
+        sourceVersionId,
+        attemptNumber,
+        failureCode: providerMeta?.errorCode ?? null
+      }
+    };
+  };
+}
+
+function createCreatePromptHandler(
+  idempotencyStore,
+  executeGenerationAttempt
+) {
   return async function handleCreatePrompt(request, response, projectId, endpoint) {
     const sessionId = getValidSessionId(request, response);
     if (!sessionId) return;
@@ -749,152 +961,22 @@ function createCreatePromptHandler(
       sendJson(response, statusCode, payload);
     };
 
-    const project = await findProjectBySessionStatement.get(projectId, sessionId);
-    if (!project) {
-      await sendIdempotentResponse(404, { error: PROJECT_NOT_FOUND_ERROR });
-      return;
-    }
-
-    const generationService = await resolveGenerationService(sessionId);
-
     const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
     if (!prompt) {
       await sendIdempotentResponse(400, { error: INVALID_PROMPT_ERROR });
       return;
     }
 
-    const promptMessageId = randomUUID();
-    const assistantPromptMessageId = randomUUID();
-    const projectVersionId = randomUUID();
-    const now = new Date().toISOString();
-    let status = "success";
-    let providerMeta = null;
-    let previewUrl = null;
-    let generationResult = null;
-    let preparedArtifact = null;
-    const currentVersionMeta = project.current_version_id
-      ? await findCurrentVersionMetaStatement.get(project.current_version_id, projectId)
-      : null;
-    const existingV0ChatId = extractExistingV0ChatId(currentVersionMeta?.provider_meta);
-
-    try {
-      generationResult = await generationService.provider.generate({
-        projectId,
-        prompt,
-        sessionId,
-        chatId: generationService.provider.name === "v0" ? existingV0ChatId : null
-      });
-
-      providerMeta = normalizeProviderMeta(generationResult.providerMeta, generationService.provider.name);
-      previewUrl = extractPreviewUrl(providerMeta);
-
-      if (generationResult.artifactSource) {
-        try {
-          preparedArtifact = await artifactService.prepareArtifactPayload({
-            projectId,
-            sessionId,
-            artifactSource: generationResult.artifactSource
-          });
-          if (preparedArtifact?.artifactSource?.previewUrl) {
-            previewUrl = preparedArtifact.artifactSource.previewUrl;
-            providerMeta.previewUrl = previewUrl;
-          }
-        } catch (error) {
-          status = "failed";
-          providerMeta = mapArtifactErrorMeta(error, generationService.provider.name, providerMeta);
-        }
-      } else {
-        status = "failed";
-        providerMeta = {
-          ...providerMeta,
-          errorType: "artifact_error",
-          errorCode: "ARTIFACT_SOURCE_MISSING",
-          retryable: true
-        };
-      }
-    } catch (error) {
-      status = "failed";
-      providerMeta = mapProviderErrorMeta(error, generationService.provider.name);
+    const result = await executeGenerationAttempt({
+      sessionId,
+      projectId,
+      prompt
+    });
+    if (result.type === "not_found") {
+      await sendIdempotentResponse(404, { error: PROJECT_NOT_FOUND_ERROR });
+      return;
     }
-
-    let versionNumber;
-    try {
-      await db.transaction(async (tx) => {
-        const currentVersionRow = await getCurrentVersionNumberStatement.get(projectId);
-        versionNumber = currentVersionRow.current_version_number + 1;
-        await insertProjectVersionStatement.run(
-          projectVersionId,
-          projectId,
-          versionNumber,
-          prompt,
-          status,
-          previewUrl,
-          JSON.stringify(providerMeta),
-          now
-        );
-
-        if (status === "success" && preparedArtifact) {
-          try {
-            await artifactService.insertPreparedArtifact(tx, {
-              versionId: projectVersionId,
-              prepared: preparedArtifact
-            });
-          } catch (error) {
-            status = "failed";
-            providerMeta = mapArtifactErrorMeta(
-              error,
-              generationService.provider.name,
-              providerMeta
-            );
-            await tx
-              .prepare(
-                `UPDATE project_versions
-                 SET status = ?, provider_meta = ?, preview_url = ?
-                 WHERE id = ? AND project_id = ?;`
-              )
-              .run("failed", JSON.stringify(providerMeta), previewUrl, projectVersionId, projectId);
-            await artifactService.cleanupPreparedArtifact(preparedArtifact);
-            preparedArtifact = null;
-          }
-        }
-
-        await insertPromptMessageStatement.run(
-          promptMessageId,
-          projectId,
-          projectVersionId,
-          "user",
-          prompt,
-          now
-        );
-        if (status === "success") {
-          const rawAssistant =
-            generationResult && typeof generationResult.assistantText === "string"
-              ? generationResult.assistantText.trim()
-              : "";
-          const assistantContent =
-            rawAssistant.length > 0 ? rawAssistant : GENERATION_ASSISTANT_FALLBACK_MESSAGE;
-          const assistantCreatedAt = new Date(new Date(now).getTime() + 1).toISOString();
-          await insertPromptMessageStatement.run(
-            assistantPromptMessageId,
-            projectId,
-            projectVersionId,
-            "assistant",
-            assistantContent,
-            assistantCreatedAt
-          );
-          await updateProjectCurrentVersionStatement.run(
-            projectVersionId,
-            now,
-            projectId,
-            projectVersionId,
-            projectId
-          );
-        }
-      });
-    } catch {
-      if (preparedArtifact) {
-        await artifactService.cleanupPreparedArtifact(preparedArtifact);
-      }
+    if (result.type === "error") {
       await sendIdempotentResponse(500, {
         error: {
           code: "INTERNAL_ERROR",
@@ -904,32 +986,141 @@ function createCreatePromptHandler(
       return;
     }
 
-    safelyTrackTelemetry(telemetryStore, {
-      eventName: "iterate",
-      sessionId,
-      projectId,
-      versionId: projectVersionId,
-      metadata: { versionNumber, status }
-    });
-    safelyTrackTelemetry(telemetryStore, {
-      eventName: status === "success" ? "generate" : "fail",
-      sessionId,
-      projectId,
-      versionId: projectVersionId,
-      metadata: {
-        versionNumber,
-        status,
-        errorCode: providerMeta?.errorCode ?? null
-      }
-    });
+    await sendIdempotentResponse(201, result.payload);
+  };
+}
 
-    await sendIdempotentResponse(201, {
-      promptMessageId,
-      projectVersionId,
-      versionNumber,
-      status,
-      providerMeta
+function createRegenerateVersionHandler(
+  db,
+  idempotencyStore,
+  executeGenerationAttempt
+) {
+  const findSourceVersionStatement = db.prepare(`
+    SELECT
+      v.id,
+      v.project_id,
+      v.prompt_snapshot,
+      v.status,
+      v.attempt_number
+    FROM project_versions v
+    INNER JOIN projects p ON p.id = v.project_id
+    WHERE p.id = ?
+      AND v.id = ?
+      AND p.session_id = ?
+      AND p.deleted_at IS NULL;
+  `);
+
+  return async function handleRegenerateVersion(request, response, projectId, versionId, endpoint) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+    const idempotencyKey = getValidIdempotencyKey(request, response);
+    if (!idempotencyKey) return;
+
+    let body;
+    try {
+      body = await parseJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: INVALID_JSON_ERROR });
+      return;
+    }
+
+    let idempotencyRecord;
+    try {
+      idempotencyRecord = await idempotencyStore.claim({
+        sessionId,
+        endpoint,
+        idempotencyKey,
+        payloadHash: hashPayload(body)
+      });
+    } catch {
+      sendJson(response, 500, {
+        error: {
+          code: "INTERNAL_ERROR",
+          message: "Could not process idempotency key."
+        }
+      });
+      return;
+    }
+
+    if (idempotencyRecord.type === "conflict") {
+      sendJson(response, 409, { error: IDEMPOTENCY_KEY_CONFLICT_ERROR });
+      return;
+    }
+    if (idempotencyRecord.type === "replay") {
+      sendJson(response, idempotencyRecord.statusCode, idempotencyRecord.body);
+      return;
+    }
+    if (idempotencyRecord.type === "in_progress") {
+      sendJson(response, 409, { error: IDEMPOTENCY_KEY_IN_PROGRESS_ERROR });
+      return;
+    }
+    if (idempotencyRecord.type === "error") {
+      sendJson(response, 500, {
+        error: {
+          code: "INTERNAL_ERROR",
+          message: "Could not replay idempotent response."
+        }
+      });
+      return;
+    }
+
+    const sendIdempotentResponse = async (statusCode, payload) => {
+      await idempotencyStore.saveResponse({
+        sessionId,
+        endpoint,
+        idempotencyKey,
+        statusCode,
+        body: payload
+      });
+      sendJson(response, statusCode, payload);
+    };
+
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      await sendIdempotentResponse(400, { error: INVALID_PROMPT_ERROR });
+      return;
+    }
+
+    const sourceVersion = await findSourceVersionStatement.get(projectId, versionId, sessionId);
+    if (!sourceVersion) {
+      await sendIdempotentResponse(404, { error: VERSION_NOT_FOUND_ERROR });
+      return;
+    }
+    if (sourceVersion.status !== "failed") {
+      await sendIdempotentResponse(409, { error: VERSION_NOT_REGENERABLE_ERROR });
+      return;
+    }
+
+    const hasCorrectedPrompt = Object.hasOwn(body, "prompt");
+    const prompt = hasCorrectedPrompt
+      ? (typeof body.prompt === "string" ? body.prompt.trim() : "")
+      : sourceVersion.prompt_snapshot;
+    if (!prompt) {
+      await sendIdempotentResponse(400, { error: INVALID_PROMPT_ERROR });
+      return;
+    }
+
+    const result = await executeGenerationAttempt({
+      sessionId,
+      projectId,
+      prompt,
+      sourceVersionId: sourceVersion.id,
+      attemptNumber: Number(sourceVersion.attempt_number ?? 1) + 1
     });
+    if (result.type === "not_found") {
+      await sendIdempotentResponse(404, { error: PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+    if (result.type === "error") {
+      await sendIdempotentResponse(500, {
+        error: {
+          code: "INTERNAL_ERROR",
+          message: "Could not regenerate project version."
+        }
+      });
+      return;
+    }
+
+    await sendIdempotentResponse(201, result.payload);
   };
 }
 
@@ -987,9 +1178,16 @@ function createListProjectVersionsHandler(db, artifactService) {
   const listVersionsStatement = db.prepare(`
     SELECT
       id,
+      project_id,
       version_number,
       prompt_snapshot,
       status,
+      preview_url,
+      source_version_id,
+      attempt_number,
+      failure_code,
+      started_at,
+      completed_at,
       created_at
     FROM project_versions
     WHERE project_id = ?
@@ -1011,9 +1209,16 @@ function createListProjectVersionsHandler(db, artifactService) {
     const artifactSummaries = await artifactService.getArtifactSummaryForVersions(projectId);
     const versions = rows.map((row) => ({
       id: row.id,
+      projectId: row.project_id,
       versionNumber: row.version_number,
       promptSnapshot: row.prompt_snapshot,
       status: row.status,
+      previewUrl: row.preview_url,
+      sourceVersionId: row.source_version_id,
+      attemptNumber: row.attempt_number,
+      failureCode: row.failure_code,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
       createdAt: row.created_at,
       artifact: artifactSummaries.get(row.id)?.artifact ?? null
     }));
@@ -1034,7 +1239,19 @@ function createGetProjectVersionDetailHandler(db, artifactService) {
 
     const versionRow = await db
       .prepare(
-        `SELECT id, version_number, prompt_snapshot, status, created_at, preview_url
+        `SELECT
+           id,
+           project_id,
+           version_number,
+           prompt_snapshot,
+           status,
+           created_at,
+           preview_url,
+           source_version_id,
+           attempt_number,
+           failure_code,
+           started_at,
+           completed_at
          FROM project_versions
          WHERE project_id = ? AND version_number = ?;`
       )
@@ -1053,11 +1270,17 @@ function createGetProjectVersionDetailHandler(db, artifactService) {
 
     sendJson(response, 200, {
       id: versionRow.id,
+      projectId: versionRow.project_id,
       versionNumber: versionRow.version_number,
       promptSnapshot: versionRow.prompt_snapshot,
       status: versionRow.status,
       createdAt: versionRow.created_at,
       previewUrl: versionRow.preview_url,
+      sourceVersionId: versionRow.source_version_id,
+      attemptNumber: versionRow.attempt_number,
+      failureCode: versionRow.failure_code,
+      startedAt: versionRow.started_at,
+      completedAt: versionRow.completed_at,
       artifact
     });
   };
@@ -1396,12 +1619,20 @@ export function createApp({
     v0ApiBaseUrl,
     sessionGenerationProviderFactory
   });
-  const handleCreatePrompt = createCreatePromptHandler(
+  const executeGenerationAttempt = createGenerationAttemptExecutor(
     db,
-    idempotencyStore,
     telemetryStore,
     resolveGenerationService,
     artifactService
+  );
+  const handleCreatePrompt = createCreatePromptHandler(
+    idempotencyStore,
+    executeGenerationAttempt
+  );
+  const handleRegenerateVersion = createRegenerateVersionHandler(
+    db,
+    idempotencyStore,
+    executeGenerationAttempt
   );
   const handleListProjectMessages = createListProjectMessagesHandler(db);
   const handleListProjectVersions = createListProjectVersionsHandler(db, artifactService);
@@ -1421,6 +1652,7 @@ export function createApp({
     const createPromptMatch = /^\/projects\/([^/]+)\/prompts$/.exec(path);
     const listMessagesMatch = /^\/projects\/([^/]+)\/messages$/.exec(path);
     const listVersionsMatch = /^\/projects\/([^/]+)\/versions$/.exec(path);
+    const regenerateVersionMatch = /^\/projects\/([^/]+)\/versions\/([^/]+)\/regenerate$/.exec(path);
     const versionDetailMatch = /^\/projects\/([^/]+)\/versions\/(\d+)$/.exec(path);
     const versionExportMatch = /^\/projects\/([^/]+)\/versions\/(\d+)\/export$/.exec(path);
     const projectPreviewMatch = /^\/projects\/([^/]+)\/preview$/.exec(path);
@@ -1474,6 +1706,13 @@ export function createApp({
     if (request.method === "POST" && createPromptMatch) {
       const projectId = createPromptMatch[1];
       await handleCreatePrompt(request, response, projectId, path);
+      return;
+    }
+
+    if (request.method === "POST" && regenerateVersionMatch) {
+      const projectId = regenerateVersionMatch[1];
+      const versionId = regenerateVersionMatch[2];
+      await handleRegenerateVersion(request, response, projectId, versionId, path);
       return;
     }
 

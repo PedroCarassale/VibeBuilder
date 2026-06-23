@@ -113,6 +113,8 @@
     <string name="history_empty_title">Sin versiones todavía</string>
     <string name="history_latest_success">Última success</string>
     <string name="history_status_format">Estado: %1$s</string>
+    <string name="history_regenerate">Regenerar</string>
+    <string name="history_regenerating">Regenerando…</string>
 
     <!-- v0 integration -->
     <string name="v0_settings_title">Integración v0</string>

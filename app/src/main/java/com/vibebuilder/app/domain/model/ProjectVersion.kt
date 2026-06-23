@@ -16,7 +16,12 @@ data class ProjectVersion(
     val previewHtml: String,
     val previewUrl: String? = null,
     val createdAt: Instant,
-    val status: VersionStatus = VersionStatus.READY
+    val status: VersionStatus = VersionStatus.READY,
+    val sourceVersionId: String? = null,
+    val attemptNumber: Int = 1,
+    val failureCode: String? = null,
+    val startedAt: Instant? = null,
+    val completedAt: Instant? = null
 )
 
-enum class VersionStatus { GENERATING, READY, FAILED }
+enum class VersionStatus { QUEUED, GENERATING, VALIDATING, READY, FAILED, CANCELLED }

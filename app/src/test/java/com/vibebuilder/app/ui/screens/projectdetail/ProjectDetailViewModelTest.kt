@@ -114,6 +114,63 @@ class ProjectDetailViewModelTest {
     }
 
     @Test
+    fun regenerateVersion_bloqueaDobleTapMientrasCarga() = runTest(dispatcher) {
+        val repository = DetailFakeRepository()
+        val pendingRegeneration = CompletableDeferred<Unit>()
+        repository.regenerateGate = pendingRegeneration
+        val viewModel = ProjectDetailViewModel(PROJECT_ID, repository)
+        val failedVersion = ProjectVersion(
+            id = "failed-version",
+            projectId = PROJECT_ID,
+            versionNumber = 1,
+            prompt = "Prompt fallido",
+            previewHtml = "",
+            createdAt = Clock.System.now(),
+            status = VersionStatus.FAILED
+        )
+
+        viewModel.regenerateVersion(failedVersion)
+        viewModel.regenerateVersion(failedVersion)
+        advanceUntilIdle()
+
+        assertEquals(1, repository.regenerateCalls)
+        assertTrue(viewModel.regenerationState.value.isRegenerating("failed-version"))
+
+        pendingRegeneration.complete(Unit)
+        advanceUntilIdle()
+
+        assertTrue(!viewModel.regenerationState.value.isRegenerating("failed-version"))
+    }
+
+    @Test
+    fun regenerateVersion_falloConservaErrorLocalYPermiteReintento() = runTest(dispatcher) {
+        val repository = DetailFakeRepository().apply { failRegenerate = true }
+        val viewModel = ProjectDetailViewModel(PROJECT_ID, repository)
+        val failedVersion = ProjectVersion(
+            id = "failed-version",
+            projectId = PROJECT_ID,
+            versionNumber = 1,
+            prompt = "Prompt fallido",
+            previewHtml = "",
+            createdAt = Clock.System.now(),
+            status = VersionStatus.FAILED
+        )
+
+        viewModel.regenerateVersion(failedVersion)
+        advanceUntilIdle()
+
+        assertEquals(1, repository.regenerateCalls)
+        assertEquals("No se pudo regenerar", viewModel.regenerationState.value.errorFor("failed-version"))
+
+        repository.failRegenerate = false
+        viewModel.regenerateVersion(failedVersion)
+        advanceUntilIdle()
+
+        assertEquals(2, repository.regenerateCalls)
+        assertEquals(null, viewModel.regenerationState.value.errorFor("failed-version"))
+    }
+
+    @Test
     fun editProject_validaLimites_yActualizaProyecto() = runTest(dispatcher) {
         val repository = DetailFakeRepository()
         val viewModel = ProjectDetailViewModel(PROJECT_ID, repository)
@@ -200,8 +257,11 @@ private class DetailFakeRepository : ProjectRepository {
     var sendGate: CompletableDeferred<Unit>? = null
     var updateCalls = 0
     var deleteCalls = 0
+    var regenerateCalls = 0
     var failUpdate = false
     var failDelete = false
+    var failRegenerate = false
+    var regenerateGate: CompletableDeferred<Unit>? = null
 
     override fun observeProjects(): Flow<List<Project>> = projects
 
@@ -251,6 +311,28 @@ private class DetailFakeRepository : ProjectRepository {
             previewUrl = null,
             createdAt = Clock.System.now(),
             status = VersionStatus.READY
+        )
+    }
+
+    override suspend fun regenerateVersion(
+        projectId: String,
+        versionId: String,
+        correctedPrompt: String?
+    ): ProjectVersion {
+        regenerateCalls += 1
+        regenerateGate?.await()
+        if (failRegenerate) throw IOException("No se pudo regenerar")
+        return ProjectVersion(
+            id = UUID.randomUUID().toString(),
+            projectId = projectId,
+            versionNumber = 2,
+            prompt = correctedPrompt ?: "retry",
+            previewHtml = "<h1>preview</h1>",
+            previewUrl = null,
+            createdAt = Clock.System.now(),
+            status = VersionStatus.READY,
+            sourceVersionId = versionId,
+            attemptNumber = 2
         )
     }
 

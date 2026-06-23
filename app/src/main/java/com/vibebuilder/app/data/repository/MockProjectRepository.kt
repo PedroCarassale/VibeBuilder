@@ -134,6 +134,34 @@ class MockProjectRepository : ProjectRepository {
             newVersion
         }
 
+    override suspend fun regenerateVersion(
+        projectId: String,
+        versionId: String,
+        correctedPrompt: String?
+    ): ProjectVersion = mutex.withLock {
+        val failedVersion = versionsState.value[projectId]
+            .orEmpty()
+            .firstOrNull { it.id == versionId && it.status == VersionStatus.FAILED }
+            ?: error("Version $versionId is not regenerable")
+        val prompt = correctedPrompt?.trim()?.takeIf { it.isNotEmpty() } ?: failedVersion.prompt
+        val now = Clock.System.now()
+        val nextVersionNumber = (versionsState.value[projectId]?.maxOfOrNull { it.versionNumber } ?: 0) + 1
+        val newVersion = buildVersion(projectId, nextVersionNumber, prompt, now).copy(
+            sourceVersionId = failedVersion.id,
+            attemptNumber = failedVersion.attemptNumber + 1
+        )
+        versionsState.value = versionsState.value + (
+            projectId to listOf(newVersion).plus(versionsState.value[projectId].orEmpty())
+        )
+        messagesState.value = messagesState.value + (
+            projectId to messagesState.value[projectId].orEmpty().plus(userMessage(projectId, prompt, now))
+        )
+        projectsState.value = projectsState.value.map {
+            if (it.id == projectId) it.copy(currentVersionNumber = nextVersionNumber, updatedAt = now) else it
+        }
+        newVersion
+    }
+
     override suspend fun getCurrentVersion(projectId: String): ProjectVersion? {
         val project = projectsState.value.firstOrNull { it.id == projectId } ?: return null
         return versionsState.value[projectId]

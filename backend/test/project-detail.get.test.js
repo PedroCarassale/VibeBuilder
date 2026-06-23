@@ -108,11 +108,22 @@ test("GET /projects/:projectId/versions devuelve payload final y orden consisten
     assert.equal(body[0].status, "failed");
     assert.equal(body[0].promptSnapshot, "Segundo prompt");
     assert.equal(body[0].createdAt, "2026-01-01T10:01:00.000Z");
+    assert.equal(body[0].projectId, projectId);
+    assert.equal(body[0].sourceVersionId, null);
+    assert.equal(body[0].attemptNumber, 1);
+    assert.equal(body[0].failureCode, null);
     assert.deepEqual(Object.keys(body[0]).sort(), [
       "artifact",
+      "attemptNumber",
+      "completedAt",
       "createdAt",
+      "failureCode",
       "id",
+      "previewUrl",
+      "projectId",
       "promptSnapshot",
+      "sourceVersionId",
+      "startedAt",
       "status",
       "versionNumber"
     ]);

@@ -165,6 +165,13 @@ private class RetryableRepository(private val failFirst: Boolean = true) : Proje
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion =
         throw NotImplementedError("No requerido para esta prueba")
 
+    override suspend fun regenerateVersion(
+        projectId: String,
+        versionId: String,
+        correctedPrompt: String?
+    ): ProjectVersion =
+        throw NotImplementedError("No requerido para esta prueba")
+
     override suspend fun getCurrentVersion(projectId: String): ProjectVersion? =
         throw NotImplementedError("No requerido para esta prueba")
 

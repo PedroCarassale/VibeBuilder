@@ -23,7 +23,10 @@ data class ApiPromptResponse(
     val projectVersionId: String,
     val versionNumber: Int,
     val status: String,
-    val providerMeta: JSONObject?
+    val providerMeta: JSONObject?,
+    val sourceVersionId: String? = null,
+    val attemptNumber: Int = 1,
+    val failureCode: String? = null
 )
 
 data class ApiVersionArtifact(
@@ -42,6 +45,11 @@ data class ApiProjectVersion(
     val status: String,
     val previewUrl: String? = null,
     val createdAt: String,
+    val sourceVersionId: String? = null,
+    val attemptNumber: Int = 1,
+    val failureCode: String? = null,
+    val startedAt: String? = null,
+    val completedAt: String? = null,
     val artifact: ApiVersionArtifact? = null
 )
 
@@ -92,6 +100,11 @@ interface VibeBuilderApi {
     suspend fun updateProject(projectId: String, title: String, description: String): ApiProject
     suspend fun deleteProject(projectId: String)
     suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse
+    suspend fun regenerateVersion(
+        projectId: String,
+        versionId: String,
+        correctedPrompt: String? = null
+    ): ApiPromptResponse
 
     suspend fun getV0IntegrationStatus(): ApiV0IntegrationStatus
     suspend fun saveV0ApiKey(apiKey: String)
@@ -197,6 +210,11 @@ class HttpVibeBuilderApi(
                         status = item.getString("status"),
                         previewUrl = item.optStringOrNull("previewUrl"),
                         createdAt = item.getString("createdAt"),
+                        sourceVersionId = item.optStringOrNull("sourceVersionId"),
+                        attemptNumber = item.optIntOrNull("attemptNumber") ?: 1,
+                        failureCode = item.optStringOrNull("failureCode"),
+                        startedAt = item.optStringOrNull("startedAt"),
+                        completedAt = item.optStringOrNull("completedAt"),
                         artifact = artifactObject?.let { artifact ->
                             ApiVersionArtifact(
                                 framework = artifact.getString("framework"),
@@ -286,7 +304,39 @@ class HttpVibeBuilderApi(
             projectVersionId = payload.getString("projectVersionId"),
             versionNumber = payload.getInt("versionNumber"),
             status = payload.getString("status"),
-            providerMeta = payload.optJSONObject("providerMeta")
+            providerMeta = payload.optJSONObject("providerMeta"),
+            sourceVersionId = payload.optStringOrNull("sourceVersionId"),
+            attemptNumber = payload.optIntOrNull("attemptNumber") ?: 1,
+            failureCode = payload.optStringOrNull("failureCode")
+        )
+    }
+
+    override suspend fun regenerateVersion(
+        projectId: String,
+        versionId: String,
+        correctedPrompt: String?
+    ): ApiPromptResponse = withContext(Dispatchers.IO) {
+        val trimmedPrompt = correctedPrompt?.trim().orEmpty()
+        val requestBody = JSONObject().apply {
+            if (trimmedPrompt.isNotEmpty()) put("prompt", trimmedPrompt)
+        }.toString()
+
+        val response = request(
+            method = "POST",
+            path = "/projects/$projectId/versions/$versionId/regenerate",
+            body = requestBody,
+            readTimeoutMs = PROMPT_READ_TIMEOUT_MS
+        )
+        val payload = JSONObject(response.body)
+        ApiPromptResponse(
+            promptMessageId = payload.getString("promptMessageId"),
+            projectVersionId = payload.getString("projectVersionId"),
+            versionNumber = payload.getInt("versionNumber"),
+            status = payload.getString("status"),
+            providerMeta = payload.optJSONObject("providerMeta"),
+            sourceVersionId = payload.optStringOrNull("sourceVersionId"),
+            attemptNumber = payload.optIntOrNull("attemptNumber") ?: 1,
+            failureCode = payload.optStringOrNull("failureCode")
         )
     }
 

@@ -10,6 +10,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,6 +24,7 @@ import com.vibebuilder.app.domain.model.VersionStatus
 import com.vibebuilder.app.ui.components.AppCard
 import com.vibebuilder.app.ui.components.EmptyView
 import com.vibebuilder.app.ui.components.ErrorView
+import com.vibebuilder.app.ui.components.PrimaryButton
 import com.vibebuilder.app.ui.components.SectionHeader
 import com.vibebuilder.app.ui.components.StatusPill
 import com.vibebuilder.app.ui.theme.AppSpacing
@@ -30,7 +34,10 @@ import kotlinx.datetime.toLocalDateTime
 @Composable
 fun HistoryTab(
     versions: List<ProjectVersion>,
-    errorMessage: String?
+    errorMessage: String?,
+    regenerationState: VersionRegenerationUiState,
+    onRegenerate: (ProjectVersion) -> Unit,
+    onDismissRegenerationError: (String) -> Unit
 ) {
     if (!errorMessage.isNullOrBlank()) {
         ErrorView(message = errorMessage)
@@ -66,7 +73,11 @@ fun HistoryTab(
         items(items = versions, key = { it.id }) { version ->
             VersionCard(
                 version = version,
-                isLatestSuccess = version.versionNumber == latestSuccessVersionNumber
+                isLatestSuccess = version.versionNumber == latestSuccessVersionNumber,
+                isRegenerating = regenerationState.isRegenerating(version.id),
+                regenerationError = regenerationState.errorFor(version.id),
+                onRegenerate = { onRegenerate(version) },
+                onDismissRegenerationError = { onDismissRegenerationError(version.id) }
             )
         }
         item { Spacer(Modifier.height(AppSpacing.xxl)) }
@@ -76,7 +87,11 @@ fun HistoryTab(
 @Composable
 private fun VersionCard(
     version: ProjectVersion,
-    isLatestSuccess: Boolean
+    isLatestSuccess: Boolean,
+    isRegenerating: Boolean,
+    regenerationError: String?,
+    onRegenerate: () -> Unit,
+    onDismissRegenerationError: () -> Unit
 ) {
     AppCard(
         modifier = Modifier.fillMaxWidth(),
@@ -132,6 +147,36 @@ private fun VersionCard(
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface
         )
+        if (version.status == VersionStatus.FAILED) {
+            Spacer(Modifier.height(AppSpacing.md))
+            PrimaryButton(
+                text = if (isRegenerating) {
+                    stringResource(R.string.history_regenerating)
+                } else {
+                    stringResource(R.string.history_regenerate)
+                },
+                onClick = {
+                    onDismissRegenerationError()
+                    onRegenerate()
+                },
+                enabled = !isRegenerating,
+                isLoading = isRegenerating,
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = null
+                    )
+                }
+            )
+            regenerationError?.let { error ->
+                Spacer(Modifier.height(AppSpacing.sm))
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
     }
 }
 
@@ -147,5 +192,8 @@ private fun formatTimestamp(version: ProjectVersion): String {
 private fun statusLabel(status: VersionStatus): String = when (status) {
     VersionStatus.READY -> "lista"
     VersionStatus.FAILED -> "fallida"
+    VersionStatus.QUEUED -> "en cola"
     VersionStatus.GENERATING -> "generando"
+    VersionStatus.VALIDATING -> "validando"
+    VersionStatus.CANCELLED -> "cancelada"
 }

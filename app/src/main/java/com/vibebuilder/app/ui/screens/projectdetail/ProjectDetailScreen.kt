@@ -71,6 +71,7 @@ fun ProjectDetailScreen(
     val promptInput by viewModel.promptInput.collectAsStateWithLifecycle()
     val previewExternalState by viewModel.previewExternalState.collectAsStateWithLifecycle()
     val previewResolutionState by viewModel.previewResolutionState.collectAsStateWithLifecycle()
+    val regenerationState by viewModel.regenerationState.collectAsStateWithLifecycle()
     val editState by viewModel.editProjectState.collectAsStateWithLifecycle()
     val deleteState by viewModel.deleteProjectState.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -203,7 +204,10 @@ fun ProjectDetailScreen(
                                 }
                                 DetailTab.History -> HistoryTab(
                                     versions = current.data.versions,
-                                    errorMessage = current.data.historyError
+                                    errorMessage = current.data.historyError,
+                                    regenerationState = regenerationState,
+                                    onRegenerate = viewModel::regenerateVersion,
+                                    onDismissRegenerationError = viewModel::clearRegenerationError
                                 )
                             }
                         }

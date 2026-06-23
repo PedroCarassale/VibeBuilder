@@ -78,6 +78,37 @@ class RemoteProjectRepositoryTest {
     }
 
     @Test
+    fun regenerateVersion_llamaEndpointYRefrescaDetalle() = runTest {
+        val api = FakeVibeBuilderApi()
+        val repository = RemoteProjectRepository(api)
+        repository.observeProjects().first()
+
+        val regenerated = repository.regenerateVersion(PROJECT_ID, "v-failed")
+
+        assertEquals("v-failed", api.lastRegeneratedVersionId)
+        assertEquals(3, regenerated.versionNumber)
+        assertEquals(2, regenerated.attemptNumber)
+        assertEquals("v-failed", regenerated.sourceVersionId)
+        assertEquals(3, repository.observeVersions(PROJECT_ID).first().first().versionNumber)
+        assertEquals("m-regenerated", repository.observeMessages(PROJECT_ID).first().last().id)
+    }
+
+    @Test
+    fun regenerateVersion_fallidaRefrescaDetalleYLanzaError() = runTest {
+        val api = FakeVibeBuilderApi().apply { failRegenerationResult = true }
+        val repository = RemoteProjectRepository(api)
+        repository.observeProjects().first()
+
+        val result = runCatching { repository.regenerateVersion(PROJECT_ID, "v-failed") }
+
+        assertTrue(result.isFailure)
+        val latest = repository.observeVersions(PROJECT_ID).first().first()
+        assertEquals("failed", api.lastRegenerationStatus)
+        assertEquals(com.vibebuilder.app.domain.model.VersionStatus.FAILED, latest.status)
+    }
+
+
+    @Test
     fun resolvePreviewUrl_usaUrlLocal_siEsValida() = runTest {
         val api = FakeVibeBuilderApi()
         val repository = RemoteProjectRepository(api)
@@ -149,6 +180,9 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
     var forcedPreviewUrl: String? = null
     var failUpdate: Boolean = false
     var failDelete: Boolean = false
+    var failRegenerationResult: Boolean = false
+    var lastRegeneratedVersionId: String? = null
+    var lastRegenerationStatus: String? = null
 
     private val projects = mutableListOf(
         ApiProject(
@@ -180,6 +214,16 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
                 status = "success",
                 previewUrl = null,
                 createdAt = "2026-01-01T09:30:00.000Z"
+            ),
+            ApiProjectVersion(
+                id = "v-failed",
+                projectId = "project-1",
+                versionNumber = 0,
+                promptSnapshot = "Prompt fallido",
+                status = "failed",
+                previewUrl = null,
+                createdAt = "2026-01-01T09:00:00.000Z",
+                failureCode = "PROVIDER_ERROR"
             )
         )
     )
@@ -317,6 +361,57 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
             versionNumber = versionCounter,
             status = "success",
             providerMeta = JSONObject()
+        )
+    }
+
+    override suspend fun regenerateVersion(
+        projectId: String,
+        versionId: String,
+        correctedPrompt: String?
+    ): ApiPromptResponse {
+        versionCounter += 1
+        lastRegeneratedVersionId = versionId
+        val newVersionId = "v-regenerated"
+        val messageId = "m-regenerated"
+        val status = if (failRegenerationResult) "failed" else "success"
+        lastRegenerationStatus = status
+        val createdAt = "2026-01-01T12:00:00.000Z"
+        val prompt = correctedPrompt ?: "Prompt fallido"
+        versions.getOrPut(projectId) { mutableListOf() }.add(
+            0,
+            ApiProjectVersion(
+                id = newVersionId,
+                projectId = projectId,
+                versionNumber = versionCounter,
+                promptSnapshot = prompt,
+                status = status,
+                previewUrl = null,
+                createdAt = createdAt,
+                sourceVersionId = versionId,
+                attemptNumber = 2,
+                failureCode = if (status == "failed") "PROVIDER_ERROR" else null
+            )
+        )
+        messages.getOrPut(projectId) { mutableListOf() }.add(
+            ApiPromptMessage(
+                id = messageId,
+                projectId = projectId,
+                versionId = newVersionId,
+                role = "user",
+                content = prompt,
+                createdAt = createdAt,
+                versionNumber = versionCounter
+            )
+        )
+        return ApiPromptResponse(
+            promptMessageId = messageId,
+            projectVersionId = newVersionId,
+            versionNumber = versionCounter,
+            status = status,
+            providerMeta = null,
+            sourceVersionId = versionId,
+            attemptNumber = 2,
+            failureCode = if (status == "failed") "PROVIDER_ERROR" else null
         )
     }
 

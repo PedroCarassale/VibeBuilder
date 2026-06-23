@@ -122,6 +122,27 @@ class RemoteProjectRepository(
             throw responseResult.exceptionOrNull() ?: IOException("No se pudo enviar el prompt")
         }
 
+    override suspend fun regenerateVersion(
+        projectId: String,
+        versionId: String,
+        correctedPrompt: String?
+    ): ProjectVersion = mutex.withLock {
+        if (projectsState.value.none { it.id == projectId }) error("Project $projectId not found")
+        val normalizedPrompt = correctedPrompt?.trim()?.takeIf { it.isNotEmpty() }
+        val response = api.regenerateVersion(
+            projectId = projectId,
+            versionId = versionId,
+            correctedPrompt = normalizedPrompt
+        )
+        val promptForFallback = normalizedPrompt
+            ?: versionsState.value[projectId]
+                .orEmpty()
+                .firstOrNull { it.id == versionId }
+                ?.prompt
+            ?: ""
+        completePromptLocally(projectId, promptForFallback, response)
+    }
+
     private suspend fun completePromptLocally(
         projectId: String,
         normalizedPrompt: String,
@@ -284,9 +305,12 @@ class RemoteProjectRepository(
     """.trimIndent()
 
     private fun String.toDomainStatus(): VersionStatus = when (lowercase()) {
+        "queued" -> VersionStatus.QUEUED
+        "generating" -> VersionStatus.GENERATING
+        "validating" -> VersionStatus.VALIDATING
         "success" -> VersionStatus.READY
         "failed" -> VersionStatus.FAILED
-        "generating" -> VersionStatus.GENERATING
+        "cancelled" -> VersionStatus.CANCELLED
         else -> throw IOException("Estado de generación inválido: $this")
     }
 
@@ -298,7 +322,12 @@ class RemoteProjectRepository(
         previewHtml = previewPlaceholder(promptSnapshot, versionNumber),
         previewUrl = previewUrl,
         createdAt = parseInstant(createdAt),
-        status = status.toDomainStatus()
+        status = status.toDomainStatus(),
+        sourceVersionId = sourceVersionId,
+        attemptNumber = attemptNumber,
+        failureCode = failureCode,
+        startedAt = startedAt?.let(::parseInstant),
+        completedAt = completedAt?.let(::parseInstant)
     )
 
     private fun ApiPromptMessage.toDomain(): PromptMessage = PromptMessage(

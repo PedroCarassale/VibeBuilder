@@ -52,6 +52,14 @@ data class PromptInputState(
 
 enum class PromptSendStatus { Idle, Loading, Success, Failed }
 
+data class VersionRegenerationUiState(
+    val regeneratingVersionIds: Set<String> = emptySet(),
+    val errorsByVersionId: Map<String, String> = emptyMap()
+) {
+    fun isRegenerating(versionId: String): Boolean = versionId in regeneratingVersionIds
+    fun errorFor(versionId: String): String? = errorsByVersionId[versionId]
+}
+
 data class PreviewExternalUiState(
     val isResolving: Boolean = false,
     val urlToOpen: String? = null,
@@ -159,6 +167,9 @@ class ProjectDetailViewModel(
 
     private val _previewExternalState = MutableStateFlow(PreviewExternalUiState())
     val previewExternalState: StateFlow<PreviewExternalUiState> = _previewExternalState.asStateFlow()
+
+    private val _regenerationState = MutableStateFlow(VersionRegenerationUiState())
+    val regenerationState: StateFlow<VersionRegenerationUiState> = _regenerationState.asStateFlow()
 
     private val _previewResolutionState = MutableStateFlow(PreviewResolutionUiState())
     val previewResolutionState: StateFlow<PreviewResolutionUiState> = _previewResolutionState.asStateFlow()
@@ -282,6 +293,42 @@ class ProjectDetailViewModel(
 
     fun retrySend() {
         sendPrompt()
+    }
+
+    fun regenerateVersion(version: ProjectVersion) {
+        if (version.status != VersionStatus.FAILED) return
+        if (_regenerationState.value.isRegenerating(version.id)) return
+
+        _regenerationState.update {
+            it.copy(
+                regeneratingVersionIds = it.regeneratingVersionIds + version.id,
+                errorsByVersionId = it.errorsByVersionId - version.id
+            )
+        }
+        viewModelScope.launch {
+            runCatching { repository.regenerateVersion(projectId, version.id) }
+                .onSuccess {
+                    _regenerationState.update { state ->
+                        state.copy(regeneratingVersionIds = state.regeneratingVersionIds - version.id)
+                    }
+                }
+                .onFailure { error ->
+                    _regenerationState.update { state ->
+                        state.copy(
+                            regeneratingVersionIds = state.regeneratingVersionIds - version.id,
+                            errorsByVersionId = state.errorsByVersionId + (
+                                version.id to (error.message ?: "No se pudo regenerar la versión")
+                            )
+                        )
+                    }
+                }
+        }
+    }
+
+    fun clearRegenerationError(versionId: String) {
+        _regenerationState.update {
+            it.copy(errorsByVersionId = it.errorsByVersionId - versionId)
+        }
     }
 
     fun resolvePreviewForDisplay(currentVersion: ProjectVersion?, force: Boolean = false) {
