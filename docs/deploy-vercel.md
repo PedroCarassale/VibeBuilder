@@ -19,7 +19,9 @@ En el dashboard del proyecto (**Settings → Environment Variables**) o con CLI:
 | `V0_API_URL` | No | URL base del API v0 (default `https://api.v0.dev/v1`). |
 | `TURSO_DATABASE_URL` | **Sí en producción** | La integración Turso en Vercel la crea al enlazar Storage. |
 | `TURSO_AUTH_TOKEN` | **Sí en producción** | Token de la base Turso (también la inyecta la integración). |
+| `BLOB_READ_WRITE_TOKEN` | **Sí en producción** | Token de Vercel Blob para persistir artefactos generados (archivos del proyecto web). |
 | `DB_PATH` | No | Solo SQLite local; en Vercel sin Turso usa `/tmp` (datos **no persistentes**). |
+| `ARTIFACT_STORAGE_PATH` | No | Solo local; carpeta para artefactos en desarrollo (default `./data/artifacts`). |
 
 ### Turso (integración Vercel Storage)
 

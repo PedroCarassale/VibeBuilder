@@ -26,6 +26,14 @@ data class ApiPromptResponse(
     val providerMeta: JSONObject?
 )
 
+data class ApiVersionArtifact(
+    val framework: String,
+    val fileCount: Int,
+    val totalBytes: Long,
+    val validationStatus: String,
+    val hasExport: Boolean
+)
+
 data class ApiProjectVersion(
     val id: String? = null,
     val projectId: String? = null,
@@ -33,7 +41,8 @@ data class ApiProjectVersion(
     val promptSnapshot: String,
     val status: String,
     val previewUrl: String? = null,
-    val createdAt: String
+    val createdAt: String,
+    val artifact: ApiVersionArtifact? = null
 )
 
 enum class ApiPreviewTarget(val value: String) {
@@ -176,6 +185,7 @@ class HttpVibeBuilderApi(
         buildList {
             for (index in 0 until jsonArray.length()) {
                 val item = jsonArray.getJSONObject(index)
+                val artifactObject = item.optJSONObject("artifact")
                 add(
                     ApiProjectVersion(
                         id = item.optStringOrNull("id"),
@@ -186,7 +196,16 @@ class HttpVibeBuilderApi(
                             ?: "",
                         status = item.getString("status"),
                         previewUrl = item.optStringOrNull("previewUrl"),
-                        createdAt = item.getString("createdAt")
+                        createdAt = item.getString("createdAt"),
+                        artifact = artifactObject?.let { artifact ->
+                            ApiVersionArtifact(
+                                framework = artifact.getString("framework"),
+                                fileCount = artifact.getInt("fileCount"),
+                                totalBytes = artifact.getLong("totalBytes"),
+                                validationStatus = artifact.getString("validationStatus"),
+                                hasExport = artifact.optBoolean("hasExport", false)
+                            )
+                        }
                     )
                 )
             }

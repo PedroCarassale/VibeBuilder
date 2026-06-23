@@ -5,6 +5,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { startTestServer } from "./test-server.js";
 import { createV0Provider } from "../src/generation-provider.js";
+import { createLocalArtifactStorage } from "../src/artifacts/local-artifact-storage.js";
+import { createMinimalReactViteFiles } from "./helpers/mock-v0-files.js";
 
 const SESSION_ID = "8d6d3a2c-8d6a-4bf2-a0cf-f77a45ef27ab";
 let idempotencySequence = 0;
@@ -37,6 +39,14 @@ function readVersionRow(db, projectVersionId) {
     .get(projectVersionId);
 }
 
+function startV0Server(dbPath, provider) {
+  const storageRoot = path.join(path.dirname(dbPath), "artifacts");
+  return startTestServer(dbPath, {
+    generationProvider: provider,
+    artifactStorage: createLocalArtifactStorage({ rootPath: storageRoot })
+  });
+}
+
 test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta sin secretos", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "vb-backend-v0-"));
   const dbPath = path.join(tmpDir, "db.sqlite");
@@ -58,7 +68,8 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
             id: "version-real-1",
             object: "version",
             status: "completed",
-            demoUrl: "https://preview.v0.dev/real-1"
+            demoUrl: "https://preview.v0.dev/real-1",
+            files: createMinimalReactViteFiles({ title: "Dashboard" })
           },
           modelConfiguration: { modelId: "v0-1.5-md" },
           messages: [
@@ -76,7 +87,7 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
   };
 
   const provider = createV0Provider({ client: fakeClient });
-  const server = await startTestServer(dbPath, { generationProvider: provider });
+  const server = await startV0Server(dbPath, provider);
 
   try {
     const { projectId } = await createProject(server.baseUrl);
@@ -114,6 +125,12 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
     assert.equal("apiKey" in persistedMeta, false);
     assert.equal("token" in persistedMeta, false);
 
+    const artifactRow = server.db
+      .prepare("SELECT file_count FROM version_artifacts WHERE version_id = ?")
+      .get(body.projectVersionId);
+    assert.ok(artifactRow);
+    assert.ok(artifactRow.file_count >= 3);
+
     const assistantMsg = server.db
       .prepare(
         "SELECT content FROM prompt_messages WHERE project_id = ? AND role = 'assistant' ORDER BY created_at DESC LIMIT 1"
@@ -143,7 +160,8 @@ test("POST /projects/:id/prompts de seguimiento reutiliza el mismo chat de v0", 
             id: "version-real-1",
             object: "version",
             status: "completed",
-            demoUrl: "https://preview.v0.dev/real-1"
+            demoUrl: "https://preview.v0.dev/real-1",
+            files: createMinimalReactViteFiles({ title: "Dashboard" })
           },
           modelConfiguration: { modelId: "v0-1.5-md" },
           messages: [
@@ -160,7 +178,8 @@ test("POST /projects/:id/prompts de seguimiento reutiliza el mismo chat de v0", 
             id: "version-real-2",
             object: "version",
             status: "completed",
-            demoUrl: "https://preview.v0.dev/real-2"
+            demoUrl: "https://preview.v0.dev/real-2",
+            files: createMinimalReactViteFiles({ title: "Landing v2" })
           },
           modelConfiguration: { modelId: "v0-1.5-md" },
           messages: [
@@ -172,7 +191,7 @@ test("POST /projects/:id/prompts de seguimiento reutiliza el mismo chat de v0", 
   };
 
   const provider = createV0Provider({ client: fakeClient });
-  const server = await startTestServer(dbPath, { generationProvider: provider });
+  const server = await startV0Server(dbPath, provider);
 
   try {
     const { projectId } = await createProject(server.baseUrl);
@@ -239,7 +258,7 @@ test("POST /projects/:id/prompts mapea error 401 de v0 a PROVIDER_UNAUTHORIZED n
     }
   };
   const provider = createV0Provider({ client: fakeClient });
-  const server = await startTestServer(dbPath, { generationProvider: provider });
+  const server = await startV0Server(dbPath, provider);
 
   try {
     const { projectId } = await createProject(server.baseUrl);
@@ -291,7 +310,7 @@ test("POST /projects/:id/prompts mapea error 429 de v0 a PROVIDER_RATE_LIMITED r
     }
   };
   const provider = createV0Provider({ client: fakeClient });
-  const server = await startTestServer(dbPath, { generationProvider: provider });
+  const server = await startV0Server(dbPath, provider);
 
   try {
     const { projectId } = await createProject(server.baseUrl);
@@ -331,7 +350,8 @@ test("POST /projects/:id/prompts usa result.text si no hay messages de asistente
           id: "version-t",
           object: "version",
           status: "completed",
-          demoUrl: "https://preview.v0.dev/t"
+          demoUrl: "https://preview.v0.dev/t",
+          files: createMinimalReactViteFiles({ title: "Text only" })
         },
         modelConfiguration: { modelId: "v0-1.5-md" }
       })
@@ -339,7 +359,7 @@ test("POST /projects/:id/prompts usa result.text si no hay messages de asistente
   };
 
   const provider = createV0Provider({ client: fakeClient });
-  const server = await startTestServer(dbPath, { generationProvider: provider });
+  const server = await startV0Server(dbPath, provider);
 
   try {
     const { projectId } = await createProject(server.baseUrl);

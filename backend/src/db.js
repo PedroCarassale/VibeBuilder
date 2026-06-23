@@ -96,6 +96,48 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
       key_hint TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS version_artifacts (
+      id TEXT PRIMARY KEY,
+      version_id TEXT NOT NULL UNIQUE,
+      framework TEXT NOT NULL,
+      template_version TEXT NOT NULL,
+      entry_point TEXT NOT NULL,
+      generator_name TEXT,
+      generator_version TEXT,
+      provider_chat_id TEXT,
+      provider_version_id TEXT,
+      validation_status TEXT NOT NULL CHECK (
+        validation_status IN ('structural_ok', 'structural_failed')
+      ),
+      validation_report TEXT,
+      preview_ref TEXT,
+      dependency_manifest TEXT,
+      file_count INTEGER NOT NULL,
+      total_bytes INTEGER NOT NULL,
+      finalized_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (version_id) REFERENCES project_versions(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_version_artifacts_version_id
+      ON version_artifacts (version_id);
+
+    CREATE TABLE IF NOT EXISTS version_artifact_files (
+      id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      checksum_sha256 TEXT NOT NULL,
+      storage_key TEXT NOT NULL,
+      content_type TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (artifact_id) REFERENCES version_artifacts(id) ON DELETE CASCADE,
+      UNIQUE(artifact_id, relative_path)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_version_artifact_files_artifact_id
+      ON version_artifact_files (artifact_id);
   `);
 
   const projectVersionColumns = db.prepare("PRAGMA table_info(project_versions);").all();

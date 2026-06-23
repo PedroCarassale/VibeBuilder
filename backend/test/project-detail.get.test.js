@@ -109,7 +109,9 @@ test("GET /projects/:projectId/versions devuelve payload final y orden consisten
     assert.equal(body[0].promptSnapshot, "Segundo prompt");
     assert.equal(body[0].createdAt, "2026-01-01T10:01:00.000Z");
     assert.deepEqual(Object.keys(body[0]).sort(), [
+      "artifact",
       "createdAt",
+      "id",
       "promptSnapshot",
       "status",
       "versionNumber"

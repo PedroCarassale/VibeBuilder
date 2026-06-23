@@ -47,3 +47,17 @@ Use React + Vite + TypeScript as the first supported project type. Keep dependen
 - Every successful version references a complete immutable artifact.
 - A version can be validated or rebuilt without depending exclusively on a temporary provider URL.
 - Failed artifact persistence never marks the version as successful.
+
+## Implementation notes
+
+Implemented in `backend/src/artifacts/`:
+
+- **Storage:** `LocalArtifactStorage` (dev/tests) or Vercel Blob when `BLOB_READ_WRITE_TOKEN` is set.
+- **Tables:** `version_artifacts`, `version_artifact_files` (metadata in Turso/SQLite; file bodies in object storage).
+- **Generation:** `POST /projects/:id/prompts` persists an artifact before marking `success`. Provider files come from v0 `latestVersion.files` / `getVersion`, or from the mock template.
+- **API:**
+  - `GET /projects/:projectId/versions` — includes optional `artifact` summary and `id`.
+  - `GET /projects/:projectId/versions/:versionNumber` — artifact detail with file paths (no content).
+  - `GET /projects/:projectId/versions/:versionNumber/export` — ZIP download for the session owner.
+- **Android:** `ApiProjectVersion.artifact` parsed optionally; UI unchanged in this topic.
+- **Validation:** structural manifest checks only; build/install validation is Topic 3.

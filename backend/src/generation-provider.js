@@ -1,3 +1,6 @@
+import { createMockArtifactSource } from "./artifacts/mock-artifact-source.js";
+import { extractV0ArtifactSource } from "./artifacts/v0-artifact-extractor.js";
+
 const DEFAULT_PROVIDER_DELAY_MS = 25;
 const HTTP_STATUS_FROM_MESSAGE_REGEX = /^HTTP\s+(\d{3})\b/i;
 
@@ -72,15 +75,24 @@ export function createMockV0Provider({ defaultDelayMs = DEFAULT_PROVIDER_DELAY_M
       await waitWithAbort(defaultDelayMs, signal);
       const elapsedMs = Date.now() - startedAt;
 
+      const mockChatId = `mock-${Date.now()}`;
+      const artifactSource = createMockArtifactSource({
+        prompt,
+        previewUrl: `https://preview.v0.dev/${mockChatId}`
+      });
+
       return {
         providerMeta: {
           provider: "mock-v0",
           model: "v0-simulated",
-          requestId: `mock-${Date.now()}`,
+          requestId: mockChatId,
+          chatId: mockChatId,
+          previewUrl: artifactSource.previewUrl,
           latencyMs: elapsedMs,
           promptLength: prompt.length
         },
-        assistantText: "Listo: simulación mock lista para previsualizar."
+        assistantText: "Listo: simulación mock lista para previsualizar.",
+        artifactSource
       };
     }
   };
@@ -191,9 +203,15 @@ function extractV0ProviderMeta(result, prompt, elapsedMs) {
     promptLength: prompt.length
   };
 
-  const requestId = pickStringField(result, ["id"]);
-  if (requestId) {
-    meta.requestId = requestId;
+  const chatId = pickStringField(result, ["id"]);
+  if (chatId) {
+    meta.requestId = chatId;
+    meta.chatId = chatId;
+  }
+
+  const providerVersionId = pickStringField(result?.latestVersion, ["id"]);
+  if (providerVersionId) {
+    meta.providerVersionId = providerVersionId;
   }
 
   const modelId =
@@ -281,9 +299,16 @@ export function createV0Provider({
           signal
         );
         const elapsedMs = Date.now() - startedAt;
+        const artifactSource = await extractV0ArtifactSource({
+          client: v0Client,
+          chatResult: result,
+          generatorName: "v0",
+          generatorVersion: pickStringField(result?.modelConfiguration, ["modelId"])
+        });
         return {
           providerMeta: extractV0ProviderMeta(result, prompt, elapsedMs),
-          assistantText: extractV0AssistantText(result)
+          assistantText: extractV0AssistantText(result),
+          artifactSource
         };
       } catch (error) {
         if (isAbortError(error)) {

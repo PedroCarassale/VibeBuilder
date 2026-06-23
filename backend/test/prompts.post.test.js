@@ -89,13 +89,12 @@ test("POST /projects/:projectId/prompts crea PromptMessage y ProjectVersion en s
     assert.ok(body.projectVersionId);
     assert.equal(body.versionNumber, 1);
     assert.equal(body.status, "success");
-    assert.deepEqual(body.providerMeta, {
-      provider: "mock-v0",
-      model: "v0-simulated",
-      requestId: "req-success-1",
-      finishReason: "completed",
-      latencyMs: 12
-    });
+    assert.equal(body.providerMeta.provider, "mock-v0");
+    assert.equal(body.providerMeta.model, "v0-simulated");
+    assert.equal(body.providerMeta.requestId, "req-success-1");
+    assert.equal(body.providerMeta.finishReason, "completed");
+    assert.equal(body.providerMeta.latencyMs, 12);
+    assert.match(body.providerMeta.previewUrl ?? "", /^https:\/\/preview\.v0\.dev\//);
 
     const promptRow = server.db
       .prepare("SELECT id, project_id, version_id, role, content FROM prompt_messages WHERE id = ?")
@@ -123,7 +122,9 @@ test("POST /projects/:projectId/prompts crea PromptMessage y ProjectVersion en s
     assert.equal(versionRow.status, "success");
 
     const persistedProviderMeta = JSON.parse(versionRow.provider_meta);
-    assert.deepEqual(persistedProviderMeta, body.providerMeta);
+    assert.equal(persistedProviderMeta.provider, body.providerMeta.provider);
+    assert.equal(persistedProviderMeta.requestId, body.providerMeta.requestId);
+    assert.equal(persistedProviderMeta.previewUrl, body.providerMeta.previewUrl);
     assert.equal("secretToken" in persistedProviderMeta, false);
 
     const projectRow = server.db

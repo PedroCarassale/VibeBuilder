@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import { createArtifactService } from "./artifacts/artifact-service.js";
+import { streamArtifactZip } from "./artifacts/zip-export.js";
+import { resolveArtifactStorage } from "./artifacts/storage-factory.js";
 import {
   ProviderTimeoutError,
   V0ProviderError,
@@ -623,7 +626,13 @@ function createDeleteProjectHandler(db) {
   };
 }
 
-function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolveGenerationService) {
+function createCreatePromptHandler(
+  db,
+  idempotencyStore,
+  telemetryStore,
+  resolveGenerationService,
+  artifactService
+) {
   const findProjectBySessionStatement = db.prepare(`
     SELECT id, current_version_id
     FROM projects
@@ -762,6 +771,7 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
     let providerMeta = null;
     let previewUrl = null;
     let generationResult = null;
+    let preparedArtifact = null;
     const currentVersionMeta = project.current_version_id
       ? await findCurrentVersionMetaStatement.get(project.current_version_id, projectId)
       : null;
@@ -777,6 +787,31 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
 
       providerMeta = normalizeProviderMeta(generationResult.providerMeta, generationService.provider.name);
       previewUrl = extractPreviewUrl(providerMeta);
+
+      if (generationResult.artifactSource) {
+        try {
+          preparedArtifact = await artifactService.prepareArtifactPayload({
+            projectId,
+            sessionId,
+            artifactSource: generationResult.artifactSource
+          });
+          if (preparedArtifact?.artifactSource?.previewUrl) {
+            previewUrl = preparedArtifact.artifactSource.previewUrl;
+            providerMeta.previewUrl = previewUrl;
+          }
+        } catch (error) {
+          status = "failed";
+          providerMeta = mapArtifactErrorMeta(error, generationService.provider.name, providerMeta);
+        }
+      } else {
+        status = "failed";
+        providerMeta = {
+          ...providerMeta,
+          errorType: "artifact_error",
+          errorCode: "ARTIFACT_SOURCE_MISSING",
+          retryable: true
+        };
+      }
     } catch (error) {
       status = "failed";
       providerMeta = mapProviderErrorMeta(error, generationService.provider.name);
@@ -784,7 +819,7 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
 
     let versionNumber;
     try {
-      await db.transaction(async () => {
+      await db.transaction(async (tx) => {
         const currentVersionRow = await getCurrentVersionNumberStatement.get(projectId);
         versionNumber = currentVersionRow.current_version_number + 1;
         await insertProjectVersionStatement.run(
@@ -797,6 +832,32 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
           JSON.stringify(providerMeta),
           now
         );
+
+        if (status === "success" && preparedArtifact) {
+          try {
+            await artifactService.insertPreparedArtifact(tx, {
+              versionId: projectVersionId,
+              prepared: preparedArtifact
+            });
+          } catch (error) {
+            status = "failed";
+            providerMeta = mapArtifactErrorMeta(
+              error,
+              generationService.provider.name,
+              providerMeta
+            );
+            await tx
+              .prepare(
+                `UPDATE project_versions
+                 SET status = ?, provider_meta = ?, preview_url = ?
+                 WHERE id = ? AND project_id = ?;`
+              )
+              .run("failed", JSON.stringify(providerMeta), previewUrl, projectVersionId, projectId);
+            await artifactService.cleanupPreparedArtifact(preparedArtifact);
+            preparedArtifact = null;
+          }
+        }
+
         await insertPromptMessageStatement.run(
           promptMessageId,
           projectId,
@@ -831,6 +892,9 @@ function createCreatePromptHandler(db, idempotencyStore, telemetryStore, resolve
         }
       });
     } catch {
+      if (preparedArtifact) {
+        await artifactService.cleanupPreparedArtifact(preparedArtifact);
+      }
       await sendIdempotentResponse(500, {
         error: {
           code: "INTERNAL_ERROR",
@@ -914,7 +978,7 @@ function createListProjectMessagesHandler(db) {
   };
 }
 
-function createListProjectVersionsHandler(db) {
+function createListProjectVersionsHandler(db, artifactService) {
   const findProjectBySessionStatement = db.prepare(`
     SELECT id
     FROM projects
@@ -922,6 +986,7 @@ function createListProjectVersionsHandler(db) {
   `);
   const listVersionsStatement = db.prepare(`
     SELECT
+      id,
       version_number,
       prompt_snapshot,
       status,
@@ -943,13 +1008,89 @@ function createListProjectVersionsHandler(db) {
     }
 
     const rows = await listVersionsStatement.all(projectId);
+    const artifactSummaries = await artifactService.getArtifactSummaryForVersions(projectId);
     const versions = rows.map((row) => ({
+      id: row.id,
       versionNumber: row.version_number,
       promptSnapshot: row.prompt_snapshot,
       status: row.status,
-      createdAt: row.created_at
+      createdAt: row.created_at,
+      artifact: artifactSummaries.get(row.id)?.artifact ?? null
     }));
     sendJson(response, 200, versions);
+  };
+}
+
+function createGetProjectVersionDetailHandler(db, artifactService) {
+  return async function handleGetProjectVersionDetail(request, response, projectId, versionNumber) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    const parsedVersionNumber = Number.parseInt(versionNumber, 10);
+    if (!Number.isFinite(parsedVersionNumber) || parsedVersionNumber <= 0) {
+      sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+
+    const versionRow = await db
+      .prepare(
+        `SELECT id, version_number, prompt_snapshot, status, created_at, preview_url
+         FROM project_versions
+         WHERE project_id = ? AND version_number = ?;`
+      )
+      .get(projectId, parsedVersionNumber);
+
+    const artifact = await artifactService.getVersionArtifactDetail({
+      projectId,
+      versionNumber: parsedVersionNumber,
+      sessionId
+    });
+
+    if (!versionRow || !artifact) {
+      sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+
+    sendJson(response, 200, {
+      id: versionRow.id,
+      versionNumber: versionRow.version_number,
+      promptSnapshot: versionRow.prompt_snapshot,
+      status: versionRow.status,
+      createdAt: versionRow.created_at,
+      previewUrl: versionRow.preview_url,
+      artifact
+    });
+  };
+}
+
+function createExportProjectVersionHandler(artifactService) {
+  return async function handleExportProjectVersion(request, response, projectId, versionNumber) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    const parsedVersionNumber = Number.parseInt(versionNumber, 10);
+    if (!Number.isFinite(parsedVersionNumber) || parsedVersionNumber <= 0) {
+      sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+
+    const exportPayload = await artifactService.openVersionExport({
+      projectId,
+      versionNumber: parsedVersionNumber,
+      sessionId
+    });
+
+    if (!exportPayload) {
+      sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+
+    await streamArtifactZip({
+      response,
+      files: exportPayload.files,
+      artifactStorage: artifactService.artifactStorage,
+      archiveName: `project-${projectId}-v${parsedVersionNumber}.zip`
+    });
   };
 }
 
@@ -1234,10 +1375,16 @@ export function createApp({
   generationProvider,
   sessionV0KeyStore = null,
   v0ApiBaseUrl,
-  sessionGenerationProviderFactory = null
+  sessionGenerationProviderFactory = null,
+  artifactStorage = null
 } = {}) {
   const idempotencyStore = createIdempotencyStore(db);
   const telemetryStore = createTelemetryStore(db);
+  const resolvedArtifactStorage = artifactStorage ?? resolveArtifactStorage();
+  const artifactService = createArtifactService({
+    db,
+    artifactStorage: resolvedArtifactStorage
+  });
   const handleCreateProject = createProjectHandler(db, idempotencyStore, telemetryStore);
   const handleListProjects = createListProjectsHandler(db);
   const handleUpdateProject = createUpdateProjectHandler(db);
@@ -1253,10 +1400,13 @@ export function createApp({
     db,
     idempotencyStore,
     telemetryStore,
-    resolveGenerationService
+    resolveGenerationService,
+    artifactService
   );
   const handleListProjectMessages = createListProjectMessagesHandler(db);
-  const handleListProjectVersions = createListProjectVersionsHandler(db);
+  const handleListProjectVersions = createListProjectVersionsHandler(db, artifactService);
+  const handleGetProjectVersionDetail = createGetProjectVersionDetailHandler(db, artifactService);
+  const handleExportProjectVersion = createExportProjectVersionHandler(artifactService);
   const handleGetProjectPreview = createGetProjectPreviewHandler(db, telemetryStore);
   const handleGetTelemetrySummary = createGetTelemetrySummaryHandler(telemetryStore);
   const v0IntegrationHandlers = createV0IntegrationHandlers({
@@ -1271,6 +1421,8 @@ export function createApp({
     const createPromptMatch = /^\/projects\/([^/]+)\/prompts$/.exec(path);
     const listMessagesMatch = /^\/projects\/([^/]+)\/messages$/.exec(path);
     const listVersionsMatch = /^\/projects\/([^/]+)\/versions$/.exec(path);
+    const versionDetailMatch = /^\/projects\/([^/]+)\/versions\/(\d+)$/.exec(path);
+    const versionExportMatch = /^\/projects\/([^/]+)\/versions\/(\d+)\/export$/.exec(path);
     const projectPreviewMatch = /^\/projects\/([^/]+)\/preview$/.exec(path);
     const projectMatch = /^\/projects\/([^/]+)$/.exec(path);
 
@@ -1337,6 +1489,20 @@ export function createApp({
       return;
     }
 
+    if (request.method === "GET" && versionExportMatch) {
+      const projectId = versionExportMatch[1];
+      const versionNumber = versionExportMatch[2];
+      await handleExportProjectVersion(request, response, projectId, versionNumber);
+      return;
+    }
+
+    if (request.method === "GET" && versionDetailMatch) {
+      const projectId = versionDetailMatch[1];
+      const versionNumber = versionDetailMatch[2];
+      await handleGetProjectVersionDetail(request, response, projectId, versionNumber);
+      return;
+    }
+
     if (request.method === "GET" && projectPreviewMatch) {
       const projectId = projectPreviewMatch[1];
       await handleGetProjectPreview(request, response, projectId, requestUrl);
@@ -1367,8 +1533,24 @@ function normalizeProviderMeta(providerMeta, providerName) {
   if (typeof providerMeta.latencyMs === "number") normalized.latencyMs = providerMeta.latencyMs;
   if (typeof providerMeta.promptLength === "number") normalized.promptLength = providerMeta.promptLength;
   if (typeof providerMeta.previewUrl === "string") normalized.previewUrl = providerMeta.previewUrl;
+  if (typeof providerMeta.chatId === "string") normalized.chatId = providerMeta.chatId;
 
   return normalized;
+}
+
+function mapArtifactErrorMeta(error, providerName, baseMeta = {}) {
+  const code =
+    typeof error?.code === "string" && error.code.length > 0
+      ? error.code
+      : "ARTIFACT_PERSISTENCE_FAILED";
+
+  return {
+    ...baseMeta,
+    provider: providerName,
+    errorType: "artifact_error",
+    errorCode: code,
+    retryable: true
+  };
 }
 
 function parseProviderMeta(providerMeta) {

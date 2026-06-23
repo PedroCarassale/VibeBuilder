@@ -7,17 +7,34 @@ import {
   extractV0AssistantText,
   generateWithTimeout
 } from "../src/generation-provider.js";
+import { createMinimalReactViteFiles } from "./helpers/mock-v0-files.js";
+
+function withArtifactFiles(result) {
+  if (!result || typeof result !== "object") return result;
+  const latestVersion = result.latestVersion ?? {};
+  return {
+    ...result,
+    latestVersion: {
+      id: latestVersion.id ?? "version-1",
+      object: latestVersion.object ?? "version",
+      status: latestVersion.status ?? "completed",
+      demoUrl: latestVersion.demoUrl ?? "https://preview.v0.dev/test",
+      ...latestVersion,
+      files: latestVersion.files ?? createMinimalReactViteFiles()
+    }
+  };
+}
 
 function buildFakeClient(behavior, sendMessageBehavior = behavior) {
   const calls = [];
   const sendMessageCalls = [];
   const create = async (params) => {
     calls.push(params);
-    return behavior(params);
+    return withArtifactFiles(await behavior(params));
   };
   const sendMessage = async (params) => {
     sendMessageCalls.push(params);
-    return sendMessageBehavior(params);
+    return withArtifactFiles(await sendMessageBehavior(params));
   };
   return {
     calls,
