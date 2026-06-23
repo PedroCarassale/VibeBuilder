@@ -18,6 +18,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.Clock
+import kotlinx.datetime.Instant
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -60,28 +61,83 @@ class ProjectListViewModelTest {
         collector.cancel()
     }
 
+    @Test
+    fun search_buscaTituloYDescripcion_yDistingueCeroResultados() = runTest(dispatcher) {
+        val viewModel = ProjectListViewModel(RetryableRepository(failFirst = false))
+        val collector = collectUiState(viewModel)
+        advanceUntilIdle()
+
+        viewModel.onSearchQueryChange("  móvil ")
+        advanceUntilIdle()
+        var content = viewModel.uiState.value as ProjectListUiState.Content
+        assertEquals(listOf("project-2"), content.projects.map { it.id })
+        assertEquals(3, content.totalCount)
+
+        viewModel.onSearchQueryChange("inexistente")
+        advanceUntilIdle()
+        content = viewModel.uiState.value as ProjectListUiState.Content
+        assertTrue(content.projects.isEmpty())
+        assertEquals(3, content.totalCount)
+        collector.cancel()
+    }
+
+    @Test
+    fun sort_aplicaLosTresOrdenes() = runTest(dispatcher) {
+        val viewModel = ProjectListViewModel(RetryableRepository(failFirst = false))
+        val collector = collectUiState(viewModel)
+        advanceUntilIdle()
+        assertEquals(listOf("project-3", "project-2", "project-1"), contentIds(viewModel))
+
+        viewModel.onSortChange(ProjectSort.NameAscending)
+        advanceUntilIdle()
+        assertEquals(listOf("project-2", "project-1", "project-3"), contentIds(viewModel))
+
+        viewModel.onSortChange(ProjectSort.NewestCreated)
+        advanceUntilIdle()
+        assertEquals(listOf("project-3", "project-2", "project-1"), contentIds(viewModel))
+        collector.cancel()
+    }
+
+    private fun contentIds(viewModel: ProjectListViewModel) =
+        (viewModel.uiState.value as ProjectListUiState.Content).projects.map { it.id }
+
     private fun TestScope.collectUiState(viewModel: ProjectListViewModel): Job =
         launch { viewModel.uiState.collect { } }
 }
 
-private class RetryableRepository : ProjectRepository {
+private class RetryableRepository(private val failFirst: Boolean = true) : ProjectRepository {
     var observeCalls: Int = 0
         private set
 
     override fun observeProjects(): Flow<List<Project>> = flow {
         observeCalls += 1
-        if (observeCalls == 1) {
+        if (failFirst && observeCalls == 1) {
             throw IOException("Sin conexion")
         }
-        val now = Clock.System.now()
         emit(
             listOf(
                 Project(
                     id = "project-1",
-                    title = "Proyecto QA",
+                    title = "Beta",
                     description = "Verifica reintento",
-                    createdAt = now,
-                    updatedAt = now,
+                    createdAt = Instant.parse("2026-01-01T00:00:00Z"),
+                    updatedAt = Instant.parse("2026-01-01T00:00:00Z"),
+                    currentVersionNumber = 0
+                ),
+                Project(
+                    id = "project-2",
+                    title = "alpha",
+                    description = "Aplicación móvil",
+                    createdAt = Instant.parse("2026-01-02T00:00:00Z"),
+                    updatedAt = Instant.parse("2026-01-02T00:00:00Z"),
+                    currentVersionNumber = 0
+                ),
+                Project(
+                    id = "project-3",
+                    title = "Gamma",
+                    description = "Panel web",
+                    createdAt = Instant.parse("2026-01-03T00:00:00Z"),
+                    updatedAt = Instant.parse("2026-01-03T00:00:00Z"),
                     currentVersionNumber = 0
                 )
             )
@@ -98,6 +154,12 @@ private class RetryableRepository : ProjectRepository {
         throw NotImplementedError("No requerido para esta prueba")
 
     override suspend fun createProject(title: String, description: String): Project =
+        throw NotImplementedError("No requerido para esta prueba")
+
+    override suspend fun updateProject(projectId: String, title: String, description: String): Project =
+        throw NotImplementedError("No requerido para esta prueba")
+
+    override suspend fun deleteProject(projectId: String) =
         throw NotImplementedError("No requerido para esta prueba")
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion =

@@ -10,6 +10,13 @@
     <string name="project_list_create_cta">Crear proyecto</string>
     <string name="project_list_fab_cd">Crear nuevo proyecto</string>
     <string name="project_card_tagline">Proyecto generado con IA</string>
+    <string name="project_list_search_label">Buscar proyectos</string>
+    <string name="project_list_sort_cd">Ordenar proyectos</string>
+    <string name="project_sort_recently_updated">Actualizados recientemente</string>
+    <string name="project_sort_name">Nombre A–Z</string>
+    <string name="project_sort_newest_created">Creados recientemente</string>
+    <string name="project_list_no_matches_title">No hay coincidencias</string>
+    <string name="project_list_no_matches_subtitle">Prueba con otro nombre o descripción.</string>
 
     <!-- Create project -->
     <string name="create_project_title">Nuevo proyecto</string>
@@ -28,6 +35,19 @@
     <string name="project_detail_tab_prompt">Prompt</string>
     <string name="project_detail_tab_preview">Preview</string>
     <string name="project_detail_tab_history">Historial</string>
+    <string name="project_actions_cd">Acciones del proyecto</string>
+    <string name="project_edit_action">Editar proyecto</string>
+    <string name="project_delete_action">Eliminar proyecto</string>
+    <string name="project_edit_title">Editar proyecto</string>
+    <string name="project_edit_save">Guardar</string>
+    <string name="project_title_required">El nombre es requerido.</string>
+    <string name="project_title_too_long">El nombre no puede superar 100 caracteres.</string>
+    <string name="project_description_too_long">La descripción no puede superar 500 caracteres.</string>
+    <string name="project_description_counter">%1$d/500 caracteres</string>
+    <string name="project_delete_title">Eliminar proyecto</string>
+    <string name="project_delete_message">¿Eliminar “%1$s”? Se ocultará el proyecto, pero se conservarán sus versiones y mensajes.</string>
+    <string name="project_delete_confirm">Eliminar</string>
+    <string name="project_delete_success">Proyecto eliminado</string>
     <string name="prompt_input_placeholder">Escribe una instrucción para iterar sobre la app…</string>
     <string name="prompt_send">Enviar prompt</string>
     <string name="prompt_send_cd">Enviar prompt</string>
@@ -122,4 +142,5 @@
     <string name="generic_error">Algo salió mal. Intenta nuevamente.</string>
     <string name="retry">Reintentar</string>
     <string name="dismiss">Cerrar</string>
+    <string name="cancel">Cancelar</string>
 </resources>

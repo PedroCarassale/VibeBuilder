@@ -17,16 +17,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -54,6 +62,7 @@ private enum class DetailTab { Prompt, Preview, History }
 fun ProjectDetailScreen(
     projectId: String,
     onBack: () -> Unit,
+    onDeleted: () -> Unit = onBack,
     viewModel: ProjectDetailViewModel = viewModel(
         factory = remember(projectId) { ProjectDetailViewModel.factory(projectId) }
     )
@@ -62,9 +71,16 @@ fun ProjectDetailScreen(
     val promptInput by viewModel.promptInput.collectAsStateWithLifecycle()
     val previewExternalState by viewModel.previewExternalState.collectAsStateWithLifecycle()
     val previewResolutionState by viewModel.previewResolutionState.collectAsStateWithLifecycle()
+    val editState by viewModel.editProjectState.collectAsStateWithLifecycle()
+    val deleteState by viewModel.deleteProjectState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(deleteState.succeeded) {
+        if (deleteState.succeeded) onDeleted()
+    }
 
     LaunchedEffect(previewExternalState.urlToOpen) {
         val url = previewExternalState.urlToOpen ?: return@LaunchedEffect
@@ -97,6 +113,31 @@ fun ProjectDetailScreen(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = stringResource(R.string.back_cd)
                         )
+                    }
+                },
+                actions = {
+                    if (uiState is ProjectDetailUiState.Content) {
+                        Box {
+                            IconButton(onClick = { menuExpanded = true }) {
+                                Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.project_actions_cd))
+                            }
+                            DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.project_edit_action)) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        viewModel.showEditProject((uiState as ProjectDetailUiState.Content).data.project)
+                                    }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.project_delete_action), color = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        menuExpanded = false
+                                        viewModel.showDeleteProject()
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             )
@@ -170,6 +211,80 @@ fun ProjectDetailScreen(
                 }
             }
         }
+    }
+
+    if (editState.isVisible) {
+        AlertDialog(
+            onDismissRequest = viewModel::dismissEditProject,
+            title = { Text(stringResource(R.string.project_edit_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                    OutlinedTextField(
+                        value = editState.title,
+                        onValueChange = viewModel::onEditTitleChange,
+                        enabled = !editState.isSaving,
+                        label = { Text(stringResource(R.string.create_project_name_label)) },
+                        isError = editState.titleError != null,
+                        supportingText = editState.titleError?.let { error ->
+                            { Text(stringResource(if (error == EditProjectValidationError.Required) R.string.project_title_required else R.string.project_title_too_long)) }
+                        },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = editState.description,
+                        onValueChange = viewModel::onEditDescriptionChange,
+                        enabled = !editState.isSaving,
+                        label = { Text(stringResource(R.string.create_project_description_label)) },
+                        isError = editState.descriptionError != null,
+                        supportingText = {
+                            Text(
+                                editState.errorMessage
+                                    ?: if (editState.descriptionError != null) stringResource(R.string.project_description_too_long)
+                                    else stringResource(R.string.project_description_counter, editState.description.length)
+                            )
+                        },
+                        minLines = 3,
+                        maxLines = 6
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::saveProjectEdit, enabled = !editState.isSaving) {
+                    if (editState.isSaving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text(stringResource(R.string.project_edit_save))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissEditProject, enabled = !editState.isSaving) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (deleteState.isVisible) {
+        val projectTitle = (uiState as? ProjectDetailUiState.Content)?.data?.project?.title.orEmpty()
+        AlertDialog(
+            onDismissRequest = viewModel::dismissDeleteProject,
+            title = { Text(stringResource(R.string.project_delete_title)) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(AppSpacing.sm)) {
+                    Text(stringResource(R.string.project_delete_message, projectTitle))
+                    deleteState.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = viewModel::deleteProject, enabled = !deleteState.isDeleting) {
+                    if (deleteState.isDeleting) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    else Text(stringResource(R.string.project_delete_confirm), color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissDeleteProject, enabled = !deleteState.isDeleting) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
     }
 }
 

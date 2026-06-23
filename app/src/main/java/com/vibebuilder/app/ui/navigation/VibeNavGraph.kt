@@ -1,6 +1,10 @@
 package com.vibebuilder.app.ui.navigation
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -14,6 +18,7 @@ import com.vibebuilder.app.ui.screens.v0settings.V0IntegrationScreen
 @Composable
 fun VibeNavGraph() {
     val navController = rememberNavController()
+    var deletionConfirmed by remember { mutableStateOf(false) }
 
     NavHost(
         navController = navController,
@@ -25,7 +30,9 @@ fun VibeNavGraph() {
                 onOpenV0Settings = { navController.navigate(Screen.SettingsV0.route) },
                 onProjectClick = { projectId ->
                     navController.navigate(Screen.ProjectDetail.routeFor(projectId))
-                }
+                },
+                deletionConfirmed = deletionConfirmed,
+                onDeletionConfirmationShown = { deletionConfirmed = false }
             )
         }
 
@@ -53,7 +60,11 @@ fun VibeNavGraph() {
                 ?.getString(Screen.ProjectDetail.ARG_PROJECT_ID).orEmpty()
             ProjectDetailScreen(
                 projectId = projectId,
-                onBack = { navController.popBackStack() }
+                onBack = { navController.popBackStack() },
+                onDeleted = {
+                    deletionConfirmed = true
+                    navController.popBackStack(Screen.ProjectList.route, inclusive = false)
+                }
             )
         }
     }

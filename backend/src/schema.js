@@ -7,7 +7,8 @@ export const MIGRATION_STATEMENTS = [
       description TEXT,
       current_version_id TEXT,
       created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      deleted_at TEXT
     );`,
   `CREATE INDEX IF NOT EXISTS idx_projects_session_id ON projects (session_id);`,
   `CREATE TABLE IF NOT EXISTS project_versions (
@@ -90,8 +91,14 @@ export async function applyMigrations(db) {
     await db.exec("ALTER TABLE project_versions ADD COLUMN preview_url TEXT;");
   }
 
-  await db.exec(`
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_project_versions_project_version_unique
-      ON project_versions (project_id, version_number);
-  `);
+  const projectColumns = await db.prepare("PRAGMA table_info(projects);").all();
+  const hasDeletedAtColumn = projectColumns.some((column) => column.name === "deleted_at");
+  if (!hasDeletedAtColumn) {
+    await db.exec("ALTER TABLE projects ADD COLUMN deleted_at TEXT;");
+  }
+
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_active_session_updated
+    ON projects (session_id, updated_at DESC) WHERE deleted_at IS NULL;`);
+  await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_versions_project_version_unique
+    ON project_versions (project_id, version_number);`);
 }

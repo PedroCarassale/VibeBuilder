@@ -108,6 +108,11 @@ fun CreateProjectScreen(
                     onValueChange = viewModel::onDescriptionChange,
                     label = stringResource(R.string.create_project_description_label),
                     singleLine = true,
+                    isError = state.descriptionError != null,
+                    supportingText = state.descriptionError ?: stringResource(
+                        R.string.project_description_counter,
+                        state.description.length
+                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = AppSpacing.md)

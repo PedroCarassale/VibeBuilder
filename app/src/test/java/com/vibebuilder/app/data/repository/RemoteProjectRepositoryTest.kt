@@ -19,9 +19,49 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteProjectRepositoryTest {
+
+    @Test
+    fun updateProject_reemplazaEstadoReactivo() = runTest {
+        val repository = RemoteProjectRepository(FakeVibeBuilderApi())
+        repository.observeProjects().first()
+
+        val updated = repository.updateProject(PROJECT_ID, "  Nuevo nombre  ", " Nueva descripción ")
+
+        assertEquals("Nuevo nombre", updated.title)
+        assertEquals("Nueva descripción", repository.observeProject(PROJECT_ID).first()?.description)
+    }
+
+    @Test
+    fun deleteProject_eliminaProyectoYDetalleCacheado() = runTest {
+        val repository = RemoteProjectRepository(FakeVibeBuilderApi())
+        repository.observeProjects().first()
+        assertTrue(repository.observeVersions(PROJECT_ID).first().isNotEmpty())
+
+        repository.deleteProject(PROJECT_ID)
+
+        assertNull(repository.observeProject(PROJECT_ID).first())
+        assertTrue(repository.observeVersions(PROJECT_ID).first().isEmpty())
+        assertTrue(repository.observeMessages(PROJECT_ID).first().isEmpty())
+    }
+
+    @Test
+    fun erroresDeEdicionYBorrado_noMutanEstadoLocal() = runTest {
+        val api = FakeVibeBuilderApi()
+        val repository = RemoteProjectRepository(api)
+        val before = repository.observeProjects().first()
+
+        api.failUpdate = true
+        runCatching { repository.updateProject(PROJECT_ID, "Fallará", "") }
+        assertEquals(before, repository.observeProjects().first())
+
+        api.failDelete = true
+        runCatching { repository.deleteProject(PROJECT_ID) }
+        assertEquals(before, repository.observeProjects().first())
+    }
 
     @Test
     fun observeMessages_recuperaCronologico_ySinDuplicados() = runTest {
@@ -107,6 +147,8 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
     var previewRequests: Int = 0
     var nextPreviewError: ApiRequestException? = null
     var forcedPreviewUrl: String? = null
+    var failUpdate: Boolean = false
+    var failDelete: Boolean = false
 
     private val projects = mutableListOf(
         ApiProject(
@@ -220,6 +262,25 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
             updatedAt = "2026-01-01T11:00:00.000Z"
         )
         return id
+    }
+
+    override suspend fun updateProject(projectId: String, title: String, description: String): ApiProject {
+        if (failUpdate) throw IOException("update failed")
+        val index = projects.indexOfFirst { it.id == projectId }
+        val updated = projects[index].copy(
+            title = title.trim(),
+            description = description.trim().ifEmpty { null },
+            updatedAt = "2026-01-01T12:00:00.000Z"
+        )
+        projects[index] = updated
+        return updated
+    }
+
+    override suspend fun deleteProject(projectId: String) {
+        if (failDelete) throw IOException("delete failed")
+        projects.removeAll { it.id == projectId }
+        versions.remove(projectId)
+        messages.remove(projectId)
     }
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse {

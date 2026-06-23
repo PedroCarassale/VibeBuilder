@@ -75,6 +75,25 @@ data class PreviewResolutionUiState(
     val versionNumber: Int? = null
 )
 
+data class EditProjectState(
+    val isVisible: Boolean = false,
+    val title: String = "",
+    val description: String = "",
+    val titleError: EditProjectValidationError? = null,
+    val descriptionError: EditProjectValidationError? = null,
+    val isSaving: Boolean = false,
+    val errorMessage: String? = null
+)
+
+enum class EditProjectValidationError { Required, TooLong }
+
+data class DeleteProjectState(
+    val isVisible: Boolean = false,
+    val isDeleting: Boolean = false,
+    val errorMessage: String? = null,
+    val succeeded: Boolean = false
+)
+
 class ProjectDetailViewModel(
     private val projectId: String,
     private val repository: ProjectRepository
@@ -143,6 +162,82 @@ class ProjectDetailViewModel(
 
     private val _previewResolutionState = MutableStateFlow(PreviewResolutionUiState())
     val previewResolutionState: StateFlow<PreviewResolutionUiState> = _previewResolutionState.asStateFlow()
+
+    private val _editProjectState = MutableStateFlow(EditProjectState())
+    val editProjectState: StateFlow<EditProjectState> = _editProjectState.asStateFlow()
+
+    private val _deleteProjectState = MutableStateFlow(DeleteProjectState())
+    val deleteProjectState: StateFlow<DeleteProjectState> = _deleteProjectState.asStateFlow()
+
+    fun showEditProject(project: Project) {
+        _editProjectState.value = EditProjectState(
+            isVisible = true,
+            title = project.title,
+            description = project.description
+        )
+    }
+
+    fun dismissEditProject() {
+        if (!_editProjectState.value.isSaving) _editProjectState.value = EditProjectState()
+    }
+
+    fun onEditTitleChange(value: String) {
+        _editProjectState.update { it.copy(title = value, titleError = null, errorMessage = null) }
+    }
+
+    fun onEditDescriptionChange(value: String) {
+        _editProjectState.update { it.copy(description = value, descriptionError = null, errorMessage = null) }
+    }
+
+    fun saveProjectEdit() {
+        val state = _editProjectState.value
+        if (!state.isVisible || state.isSaving) return
+        val title = state.title.trim()
+        val description = state.description.trim()
+        val titleError = when {
+            title.isEmpty() -> EditProjectValidationError.Required
+            title.length > 100 -> EditProjectValidationError.TooLong
+            else -> null
+        }
+        val descriptionError = if (description.length > 500) EditProjectValidationError.TooLong else null
+        if (titleError != null || descriptionError != null) {
+            _editProjectState.update { it.copy(titleError = titleError, descriptionError = descriptionError) }
+            return
+        }
+        _editProjectState.update { it.copy(isSaving = true, errorMessage = null) }
+        viewModelScope.launch {
+            runCatching { repository.updateProject(projectId, title, description) }
+                .onSuccess { _editProjectState.value = EditProjectState() }
+                .onFailure { error ->
+                    _editProjectState.update {
+                        it.copy(isSaving = false, errorMessage = error.message ?: "No se pudo editar el proyecto")
+                    }
+                }
+        }
+    }
+
+    fun showDeleteProject() {
+        _deleteProjectState.value = DeleteProjectState(isVisible = true)
+    }
+
+    fun dismissDeleteProject() {
+        if (!_deleteProjectState.value.isDeleting) _deleteProjectState.value = DeleteProjectState()
+    }
+
+    fun deleteProject() {
+        val state = _deleteProjectState.value
+        if (!state.isVisible || state.isDeleting) return
+        _deleteProjectState.update { it.copy(isDeleting = true, errorMessage = null) }
+        viewModelScope.launch {
+            runCatching { repository.deleteProject(projectId) }
+                .onSuccess { _deleteProjectState.value = DeleteProjectState(succeeded = true) }
+                .onFailure { error ->
+                    _deleteProjectState.update {
+                        it.copy(isDeleting = false, errorMessage = error.message ?: "No se pudo eliminar el proyecto")
+                    }
+                }
+        }
+    }
 
     fun onPromptChange(value: String) {
         _promptInput.update {
