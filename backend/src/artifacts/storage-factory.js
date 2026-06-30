@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createLocalArtifactStorage } from "./local-artifact-storage.js";
@@ -6,6 +7,7 @@ import { createVercelBlobArtifactStorage } from "./vercel-blob-artifact-storage.
 const DEFAULT_LOCAL_ROOT = path.resolve(
   fileURLToPath(new URL("../../data/artifacts", import.meta.url))
 );
+const DEFAULT_VERCEL_LOCAL_ROOT = path.join(os.tmpdir(), "vibebuilder-artifacts");
 
 export function resolveArtifactStorage(options = {}) {
   const env = options.env ?? process.env;
@@ -29,6 +31,8 @@ export function resolveArtifactStorage(options = {}) {
   const rootPath =
     typeof env.ARTIFACT_STORAGE_PATH === "string" && env.ARTIFACT_STORAGE_PATH.trim().length > 0
       ? env.ARTIFACT_STORAGE_PATH.trim()
+      : onVercel
+      ? DEFAULT_VERCEL_LOCAL_ROOT
       : DEFAULT_LOCAL_ROOT;
 
   return createLocalArtifactStorage({ rootPath });
