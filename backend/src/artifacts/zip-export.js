@@ -1,43 +1,14 @@
-let zipArchiveConstructorPromise = null;
-
-async function loadZipArchiveConstructor() {
-  zipArchiveConstructorPromise ??= import("archiver").then(({ ZipArchive }) => {
-    if (typeof ZipArchive !== "function") {
-      throw new Error("archiver did not export ZipArchive.");
-    }
-    return ZipArchive;
-  });
-
-  return zipArchiveConstructorPromise;
-}
+import { strToU8, zipSync } from "fflate";
 
 export async function buildArtifactZipBuffer({ files, artifactStorage }) {
-  const ZipArchive = await loadZipArchiveConstructor();
+  const zipEntries = {};
 
-  return new Promise((resolve, reject) => {
-    const archive = new ZipArchive({ zlib: { level: 9 } });
-    const chunks = [];
+  for (const file of files) {
+    const content = await artifactStorage.getFile(file.storage_key);
+    zipEntries[file.relative_path] = typeof content === "string" ? strToU8(content) : content;
+  }
 
-    archive.on("data", (chunk) => {
-      chunks.push(chunk);
-    });
-    archive.on("error", reject);
-    archive.on("end", () => {
-      resolve(Buffer.concat(chunks));
-    });
-
-    (async () => {
-      try {
-        for (const file of files) {
-          const content = await artifactStorage.getFile(file.storage_key);
-          archive.append(content, { name: file.relative_path });
-        }
-        archive.finalize();
-      } catch (error) {
-        reject(error);
-      }
-    })();
-  });
+  return Buffer.from(zipSync(zipEntries, { level: 9 }));
 }
 
 export async function streamArtifactZip({ response, files, artifactStorage, archiveName }) {
