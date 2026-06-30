@@ -39,6 +39,13 @@ function readVersionRow(db, projectVersionId) {
     .get(projectVersionId);
 }
 
+function assertGuardedPrompt(message, userPrompt) {
+  assert.match(message, /mobile-first/i);
+  assert.match(message, /No uses base de datos/i);
+  assert.match(message, /No integres proveedores externos/i);
+  assert.match(message, new RegExp(userPrompt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+}
+
 function startV0Server(dbPath, provider) {
   const storageRoot = path.join(path.dirname(dbPath), "artifacts");
   return startTestServer(dbPath, {
@@ -54,7 +61,7 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
   const fakeClient = {
     chats: {
       create: async ({ message }) => {
-        assert.equal(message, "Genera un dashboard");
+        assertGuardedPrompt(message, "Genera un dashboard");
         return {
           id: "chat-real-1",
           object: "chat",
@@ -112,6 +119,9 @@ test("POST /projects/:id/prompts integra v0 (mockeado) y persiste providerMeta s
     assert.equal(body.providerMeta.finishReason, "completed");
     assert.equal(body.providerMeta.previewUrl, "https://preview.v0.dev/real-1");
     assert.equal(body.providerMeta.promptLength, "Genera un dashboard".length);
+    assert.equal(body.providerMeta.promptPolicy, "mobile-first-no-db-no-third-party");
+    assert.equal(body.providerMeta.userPromptLength, "Genera un dashboard".length);
+    assert.ok(body.providerMeta.enhancedPromptLength > body.providerMeta.userPromptLength);
     assert.equal(typeof body.providerMeta.latencyMs, "number");
 
     assert.equal("apiKey" in body.providerMeta, false);
@@ -221,12 +231,10 @@ test("POST /projects/:id/prompts de seguimiento reutiliza el mismo chat de v0", 
     const secondBody = await secondResponse.json();
 
     assert.equal(createCalls.length, 1);
-    assert.deepEqual(createCalls[0], { message: "Genera una landing" });
+    assertGuardedPrompt(createCalls[0].message, "Genera una landing");
     assert.equal(sendMessageCalls.length, 1);
-    assert.deepEqual(sendMessageCalls[0], {
-      chatId: "chat-real-1",
-      message: "Agrega una seccion de precios"
-    });
+    assert.equal(sendMessageCalls[0].chatId, "chat-real-1");
+    assertGuardedPrompt(sendMessageCalls[0].message, "Agrega una seccion de precios");
     assert.equal(firstBody.providerMeta.requestId, "chat-real-1");
     assert.equal(secondBody.providerMeta.requestId, "chat-real-1");
     assert.equal(secondBody.providerMeta.previewUrl, "https://preview.v0.dev/real-2");
@@ -277,13 +285,14 @@ test("POST /projects/:id/prompts mapea error 401 de v0 a PROVIDER_UNAUTHORIZED n
     const body = await response.json();
 
     assert.equal(body.status, "failed");
-    assert.deepEqual(body.providerMeta, {
-      provider: "v0",
-      errorType: "provider_error",
-      errorCode: "PROVIDER_UNAUTHORIZED",
-      httpStatus: 401,
-      retryable: false
-    });
+    assert.equal(body.providerMeta.provider, "v0");
+    assert.equal(body.providerMeta.errorType, "provider_error");
+    assert.equal(body.providerMeta.errorCode, "PROVIDER_UNAUTHORIZED");
+    assert.equal(body.providerMeta.httpStatus, 401);
+    assert.equal(body.providerMeta.retryable, false);
+    assert.equal(body.providerMeta.promptPolicy, "mobile-first-no-db-no-third-party");
+    assert.equal(body.providerMeta.userPromptLength, 1);
+    assert.ok(body.providerMeta.enhancedPromptLength > body.providerMeta.userPromptLength);
 
     const versionRow = readVersionRow(server.db, body.projectVersionId);
     assert.equal(versionRow.status, "failed");

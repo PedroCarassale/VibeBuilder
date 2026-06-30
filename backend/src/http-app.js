@@ -82,6 +82,15 @@ const UUID_V4_REGEX =
 
 const GENERATION_ASSISTANT_FALLBACK_MESSAGE =
   "Tu app ya está lista. Ábrela en el navegador para verla.";
+const GENERATION_PROMPT_POLICY_ID = "mobile-first-no-db-no-third-party";
+const GENERATION_PROMPT_GUARDRAILS = `
+Reglas obligatorias para esta etapa de VibeBuilder:
+- Crea una web app mobile-first y responsive. Prioriza pantallas angostas, navegación táctil y layouts que se vean bien desde un celular.
+- No uses base de datos, ORM, servicios persistentes ni migraciones. Si necesitas datos, usa datos mock locales o estado en memoria/sesión del navegador.
+- No integres proveedores externos ni intentes conectar APIs de terceros, autenticación real, pagos, email, analytics, storage remoto ni servicios cloud.
+- Genera una app web completa y usable con dependencias mínimas, sin requerir configuración secreta ni infraestructura adicional.
+- Mantén el alcance centrado en el pedido del usuario y evita reescribir todo si es una iteración.
+`.trim();
 
 const KEYSTORE_UNAVAILABLE_ERROR = {
   code: "KEYSTORE_UNAVAILABLE",
@@ -430,6 +439,15 @@ function safelyTrackTelemetry(telemetryStore, telemetryPayload) {
   }
 }
 
+function buildGuardedGenerationPrompt(userPrompt) {
+  return [
+    GENERATION_PROMPT_GUARDRAILS,
+    "",
+    "Prompt del usuario:",
+    userPrompt
+  ].join("\n");
+}
+
 function createProjectHandler(db, idempotencyStore, telemetryStore) {
   const insertProjectStatement = db.prepare(`
     INSERT INTO projects (
@@ -720,16 +738,21 @@ function createGenerationAttemptExecutor(
       ? await findCurrentVersionMetaStatement.get(project.current_version_id, projectId)
       : null;
     const existingV0ChatId = extractExistingV0ChatId(currentVersionMeta?.provider_meta);
+    const generationPrompt = buildGuardedGenerationPrompt(prompt);
 
     try {
       generationResult = await generationService.provider.generate({
         projectId,
-        prompt,
+        prompt: generationPrompt,
         sessionId,
         chatId: generationService.provider.name === "v0" ? existingV0ChatId : null
       });
 
       providerMeta = normalizeProviderMeta(generationResult.providerMeta, generationService.provider.name);
+      providerMeta.promptPolicy = GENERATION_PROMPT_POLICY_ID;
+      providerMeta.userPromptLength = prompt.length;
+      providerMeta.enhancedPromptLength = generationPrompt.length;
+      providerMeta.promptLength = prompt.length;
       previewUrl = extractPreviewUrl(providerMeta);
 
       if (generationResult.artifactSource) {
@@ -761,6 +784,13 @@ function createGenerationAttemptExecutor(
       providerMeta = mapProviderErrorMeta(error, generationService.provider.name);
     } finally {
       completedAt = new Date().toISOString();
+    }
+
+    if (providerMeta && typeof providerMeta === "object") {
+      providerMeta.promptPolicy ??= GENERATION_PROMPT_POLICY_ID;
+      providerMeta.userPromptLength ??= prompt.length;
+      providerMeta.enhancedPromptLength ??= generationPrompt.length;
+      providerMeta.promptLength = prompt.length;
     }
 
     let versionNumber;

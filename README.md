@@ -1,6 +1,6 @@
 # VibeBuilder — Android (Delivery 1)
 
-App Android nativa que permite crear web apps describiéndolas en lenguaje natural desde el celular. Esta es la primera entrega académica: foco en demostrar el flujo end-to-end (crear proyecto → prompt → preview → iterar → historial) usando datos mockeados pero con una arquitectura lista para conectar el backend real.
+App Android nativa que permite crear web apps describiéndolas en lenguaje natural desde el celular. Esta entrega académica demuestra el flujo end-to-end: crear proyecto, enviar prompts al backend, previsualizar la web app generada, iterar y revisar historial.
 
 Ver el documento de producto en [`AGENTS.md`](./AGENTS.md).
 
@@ -28,10 +28,24 @@ Resumen rápido:
 
 Requisitos: Android Studio Koala/Ladybug+ (AGP 8.5+), JDK 17, Android SDK 35.
 
-1. Abrir la carpeta `VibeBuilder/` desde Android Studio (File → Open).
-2. Esperar a que Gradle sincronice.
-3. Seleccionar un emulador (API 24+) o dispositivo físico.
-4. Ejecutar la configuración `app`.
+### Probar app + backend local
+
+1. En una terminal, levantar el backend:
+   ```powershell
+   cd backend
+   npm start
+   ```
+   Por defecto escucha en `http://localhost:3000`.
+
+2. Abrir la carpeta `VibeBuilder/` desde Android Studio (File → Open).
+3. Esperar a que Gradle sincronice.
+4. Seleccionar un emulador (API 24+) y ejecutar la configuración `app`.
+
+La app debug ya apunta al backend local con `API_BASE_URL=http://10.0.2.2:3000`, que es la dirección del host desde el emulador Android. Para un dispositivo físico, usar una URL accesible desde el teléfono, por ejemplo:
+
+```powershell
+.\gradlew.bat installDebug -PAPI_BASE_URL=http://192.168.1.10:3000
+```
 
 Al primer arranque la app trae un proyecto demo (“Landing de gimnasio”) precargado para mostrar el flujo sin tener que llenar el formulario.
 
@@ -51,7 +65,7 @@ app/src/main/java/com/vibebuilder/app/
 │   ├── model/                     # Project, ProjectVersion, PromptMessage
 │   └── repository/                # ProjectRepository (interfaz)
 ├── data/
-│   ├── remote/                    # VibeBuilderApi (placeholder)
+│   ├── remote/                    # Cliente HTTP hacia el backend local/remoto
 │   └── repository/
 │       ├── MockProjectRepository.kt   # Implementación in-memory + datos demo
 │       └── RemoteProjectRepository.kt # Skeleton para el backend real
@@ -81,7 +95,7 @@ app/src/main/java/com/vibebuilder/app/
 |---------------------|------------------------------------------------------------------------|
 | Project List (Home) | Lista los proyectos del usuario, FAB para crear, estados loading/empty |
 | Create Project      | Form con nombre, descripción opcional y prompt inicial (con validación)|
-| Project Detail      | Tabs: **Prompt** (chat de iteraciones), **Preview** (placeholder del HTML generado), **Historial** (versiones) |
+| Project Detail      | Tabs: **Prompt** (chat de creación/iteración), **Preview** (WebView + QR), **Historial** (versiones) |
 
 ## Datos mock
 
@@ -89,7 +103,7 @@ app/src/main/java/com/vibebuilder/app/
 
 ## Limitaciones conocidas (a resolver en Deliveries 2/3)
 
-- El preview es un placeholder textual; no renderiza HTML real (eso requerirá un `WebView` apuntando a la URL devuelta por el backend).
+- La preview depende de que el backend o v0 devuelva una URL válida para la versión generada.
 - Sin persistencia en disco: los datos se reinician al cerrar la app.
 - Sin autenticación, sin librería pública, sin fork.
 - Sin manejo avanzado de errores ni reintentos.

@@ -3,11 +3,13 @@ package com.vibebuilder.app.ui.components
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -22,19 +24,74 @@ import com.vibebuilder.app.ui.theme.AppSpacing
 @Composable
 fun LoadingView(modifier: Modifier = Modifier) {
     Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(AppSpacing.md)
+        PixelStarLoader(label = stringResource(R.string.loading_generating_project))
+    }
+}
+
+@Composable
+fun ProjectListSkeleton(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(
+                horizontal = AppSpacing.screenHorizontal,
+                vertical = AppSpacing.screenVertical
+            ),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.md)
+    ) {
+        SkeletonBlock(modifier = Modifier.fillMaxWidth(0.72f), height = 28.dp)
+        SkeletonBlock(modifier = Modifier.fillMaxWidth(0.92f), height = 18.dp)
+        Spacer(Modifier.height(AppSpacing.sm))
+        SkeletonBlock(modifier = Modifier.fillMaxWidth(), height = 56.dp)
+        repeat(4) {
+            AppCard(
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(AppSpacing.lg)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(AppSpacing.md)) {
+                    SkeletonBlock(modifier = Modifier.weight(1f), height = 22.dp)
+                    SkeletonBlock(modifier = Modifier.weight(0.28f), height = 22.dp)
+                }
+                Spacer(Modifier.height(AppSpacing.md))
+                SkeletonBlock(modifier = Modifier.fillMaxWidth(0.88f), height = 16.dp)
+                Spacer(Modifier.height(AppSpacing.xs))
+                SkeletonBlock(modifier = Modifier.fillMaxWidth(0.66f), height = 16.dp)
+            }
+        }
+    }
+}
+
+@Composable
+fun ProjectDetailSkeleton(modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(
+                horizontal = AppSpacing.screenHorizontal,
+                vertical = AppSpacing.screenVertical
+            ),
+        verticalArrangement = Arrangement.spacedBy(AppSpacing.md)
+    ) {
+        SkeletonBlock(modifier = Modifier.fillMaxWidth(), height = 48.dp)
+        AppCard(
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(AppSpacing.xl)
         ) {
-            CircularProgressIndicator(
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                text = stringResource(R.string.loading),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            SkeletonBlock(modifier = Modifier.fillMaxWidth(0.64f), height = 22.dp)
+            Spacer(Modifier.height(AppSpacing.md))
+            SkeletonBlock(modifier = Modifier.fillMaxWidth(), height = 18.dp)
+            Spacer(Modifier.height(AppSpacing.xs))
+            SkeletonBlock(modifier = Modifier.fillMaxWidth(0.74f), height = 18.dp)
+        }
+        AppCard(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = PaddingValues(AppSpacing.xl)
+        ) {
+            SkeletonBlock(modifier = Modifier.fillMaxWidth(), height = 120.dp)
+            Spacer(Modifier.height(AppSpacing.md))
+            SkeletonBlock(modifier = Modifier.fillMaxWidth(0.86f), height = 18.dp)
         }
     }
 }

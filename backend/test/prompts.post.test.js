@@ -203,12 +203,13 @@ test("POST /projects/:projectId/prompts marca failed si el proveedor falla", asy
     assert.equal(response.status, 201);
     const body = await response.json();
     assert.equal(body.status, "failed");
-    assert.deepEqual(body.providerMeta, {
-      provider: "mock-v0",
-      errorType: "provider_error",
-      errorCode: "PROVIDER_ERROR",
-      retryable: true
-    });
+    assert.equal(body.providerMeta.provider, "mock-v0");
+    assert.equal(body.providerMeta.errorType, "provider_error");
+    assert.equal(body.providerMeta.errorCode, "PROVIDER_ERROR");
+    assert.equal(body.providerMeta.retryable, true);
+    assert.equal(body.providerMeta.promptPolicy, "mobile-first-no-db-no-third-party");
+    assert.equal(body.providerMeta.userPromptLength, "Genera una app de gimnasio".length);
+    assert.ok(body.providerMeta.enhancedPromptLength > body.providerMeta.userPromptLength);
 
     const versionRow = readVersionRow(server.db, body.projectVersionId);
     assert.ok(versionRow);

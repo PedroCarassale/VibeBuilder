@@ -48,7 +48,7 @@
     <string name="project_delete_message">¿Eliminar “%1$s”? Se ocultará el proyecto, pero se conservarán sus versiones y mensajes.</string>
     <string name="project_delete_confirm">Eliminar</string>
     <string name="project_delete_success">Proyecto eliminado</string>
-    <string name="prompt_input_placeholder">Escribe una instrucción para iterar sobre la app…</string>
+    <string name="prompt_input_placeholder">Describe la app que quieres crear o el cambio que quieres hacer…</string>
     <string name="prompt_send">Enviar prompt</string>
     <string name="prompt_send_cd">Enviar prompt</string>
     <string name="prompt_assistant_label">Builder</string>
@@ -57,8 +57,8 @@
     <string name="prompt_assistant_app_ready">Tu app ya está lista.</string>
     <string name="prompt_assistant_app_ready_subtitle">Ábrela en el navegador para verla a pantalla completa y compartirla.</string>
     <string name="prompt_thinking_cd">Generando respuesta</string>
-    <string name="prompt_empty_title">Listo para iterar</string>
-    <string name="prompt_empty_subtitle">Escribe una mejora, una pantalla nueva o un cambio visual para crear la próxima versión.</string>
+    <string name="prompt_empty_title">Crea la primera versión</string>
+    <string name="prompt_empty_subtitle">Cuéntale al builder qué web app quieres crear: objetivo, pantallas principales, estilo visual y contenido inicial.</string>
 
     <string-array name="prompt_thinking_verbs">
         <item>Pensando</item>
@@ -93,13 +93,16 @@
         <item>VibeBuildeando</item>
     </string-array>
     <string name="preview_placeholder_title">Vista previa</string>
-    <string name="preview_placeholder_subtitle">Aquí se mostrará la web app generada (placeholder).</string>
+    <string name="preview_placeholder_subtitle">Cuando generes la primera versión, podrás verla aquí y abrirla en otro dispositivo.</string>
     <string name="preview_prompt_label">Prompt</string>
     <string name="preview_not_ready">La preview estará disponible cuando la generación termine con éxito.</string>
     <string name="preview_url_unavailable">No hay URL de preview disponible para esta versión.</string>
     <string name="preview_load_failed">No se pudo cargar la preview. Verifica la URL o tu conexión y vuelve a intentar.</string>
     <string name="preview_help_text">Puedes volver al chat en cualquier momento para seguir iterando sin perder el contexto del proyecto.</string>
     <string name="preview_qr_title">Abrir en otro dispositivo</string>
+    <string name="preview_share_title">Compartir preview</string>
+    <string name="preview_share_subtitle">Mostrá este código para que puedan abrir la app generada desde otro celular.</string>
+    <string name="preview_show_qr">QR</string>
     <string name="preview_qr_content_description">Código QR con la URL de la preview</string>
     <string name="preview_open_in_browser">Abrir en navegador</string>
     <string name="preview_opening_browser">Abriendo navegador…</string>
@@ -141,6 +144,7 @@
     <!-- Common -->
     <string name="back_cd">Volver</string>
     <string name="loading">Cargando…</string>
+    <string name="loading_generating_project">Generando proyecto...</string>
     <string name="generic_error">Algo salió mal. Intenta nuevamente.</string>
     <string name="retry">Reintentar</string>
     <string name="dismiss">Cerrar</string>

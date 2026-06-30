@@ -51,7 +51,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vibebuilder.app.R
 import com.vibebuilder.app.ui.components.AppTopBar
 import com.vibebuilder.app.ui.components.ErrorView
-import com.vibebuilder.app.ui.components.LoadingView
+import com.vibebuilder.app.ui.components.ProjectDetailSkeleton
 import com.vibebuilder.app.ui.theme.AppShapes
 import com.vibebuilder.app.ui.theme.AppSpacing
 
@@ -150,7 +150,7 @@ fun ProjectDetailScreen(
                 .padding(padding)
         ) {
             when (val current = uiState) {
-                ProjectDetailUiState.Loading -> LoadingView()
+                ProjectDetailUiState.Loading -> ProjectDetailSkeleton()
                 is ProjectDetailUiState.Error -> ErrorView(message = current.message)
                 is ProjectDetailUiState.NotFound ->
                     ErrorView(message = "Proyecto no encontrado: ${current.projectId}")

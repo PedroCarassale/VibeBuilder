@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,7 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,11 +40,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
 import com.vibebuilder.app.R
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.VersionStatus
 import com.vibebuilder.app.ui.components.AppCard
 import com.vibebuilder.app.ui.components.EmptyView
+import com.vibebuilder.app.ui.components.PixelStarLoader
 import com.vibebuilder.app.ui.components.PrimaryButton
 import com.vibebuilder.app.ui.components.SecondaryButton
 import com.vibebuilder.app.ui.components.SectionHeader
@@ -81,13 +84,14 @@ fun PreviewTab(
         else -> ""
     }
     val canRenderWebView =
-        currentVersion.status == VersionStatus.READY && hasLocalPreviewUrl
+        currentVersion.status == VersionStatus.READY && isSupportedPreviewUrl(displayPreviewUrl)
     val canShowQr =
         currentVersion.status == VersionStatus.READY && isSupportedPreviewUrl(displayPreviewUrl)
 
-    var isLoading by remember(localPreviewUrl) { mutableStateOf(canRenderWebView) }
-    var hasError by remember(localPreviewUrl) { mutableStateOf(false) }
-    var webViewRef by remember(localPreviewUrl) { mutableStateOf<WebView?>(null) }
+    var isLoading by remember(displayPreviewUrl) { mutableStateOf(canRenderWebView) }
+    var hasError by remember(displayPreviewUrl) { mutableStateOf(false) }
+    var webViewRef by remember(displayPreviewUrl) { mutableStateOf<WebView?>(null) }
+    var showQrDialog by remember(displayPreviewUrl) { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -140,7 +144,7 @@ fun PreviewTab(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        CircularProgressIndicator()
+                        PixelStarLoader()
                     }
                 }
 
@@ -218,15 +222,15 @@ fun PreviewTab(
                                             isLoading = false
                                         }
                                     }
-                                    loadUrl(localPreviewUrl)
+                                    loadUrl(displayPreviewUrl)
                                 }
                             },
                             update = { webView ->
                                 webViewRef = webView
-                                if (webView.url != localPreviewUrl) {
+                                if (webView.url != displayPreviewUrl) {
                                     isLoading = true
                                     hasError = false
-                                    webView.loadUrl(localPreviewUrl)
+                                    webView.loadUrl(displayPreviewUrl)
                                 }
                             }
                         )
@@ -235,7 +239,7 @@ fun PreviewTab(
                                 modifier = Modifier.fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator()
+                                PixelStarLoader()
                             }
                         }
                     }
@@ -289,20 +293,47 @@ fun PreviewTab(
             }
         }
 
-        PrimaryButton(
-            text = if (isOpeningExternal) {
-                stringResource(R.string.preview_opening_browser)
-            } else {
-                stringResource(R.string.preview_open_in_browser)
-            },
-            onClick = {
-                onDismissExternalFeedback()
-                onOpenInBrowser()
-            },
-            enabled = !isOpeningExternal,
-            isLoading = isOpeningExternal,
-            modifier = Modifier.fillMaxWidth()
-        )
+        if (canShowQr) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppSpacing.sm)
+            ) {
+                PrimaryButton(
+                    text = if (isOpeningExternal) {
+                        stringResource(R.string.preview_opening_browser)
+                    } else {
+                        stringResource(R.string.preview_open_in_browser)
+                    },
+                    onClick = {
+                        onDismissExternalFeedback()
+                        onOpenInBrowser()
+                    },
+                    enabled = !isOpeningExternal,
+                    isLoading = isOpeningExternal,
+                    modifier = Modifier.weight(1f)
+                )
+                SecondaryButton(
+                    text = stringResource(R.string.preview_show_qr),
+                    onClick = { showQrDialog = true },
+                    modifier = Modifier.width(120.dp)
+                )
+            }
+        } else {
+            PrimaryButton(
+                text = if (isOpeningExternal) {
+                    stringResource(R.string.preview_opening_browser)
+                } else {
+                    stringResource(R.string.preview_open_in_browser)
+                },
+                onClick = {
+                    onDismissExternalFeedback()
+                    onOpenInBrowser()
+                },
+                enabled = !isOpeningExternal,
+                isLoading = isOpeningExternal,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
 
         val resolvedErrorMessage = when (externalError) {
             PreviewExternalError.NotReady -> stringResource(R.string.preview_not_ready)
@@ -322,6 +353,46 @@ fun PreviewTab(
                 actionLabel = stringResource(R.string.dismiss),
                 onAction = onDismissExternalFeedback
             )
+        }
+    }
+
+    if (showQrDialog && canShowQr) {
+        Dialog(
+            onDismissRequest = { showQrDialog = false },
+        ) {
+            AppCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = AppSpacing.screenHorizontal),
+                shape = AppShapes.cardLarge,
+                containerColor = MaterialTheme.colorScheme.surface,
+                borderColor = MaterialTheme.colorScheme.outlineVariant,
+                contentPadding = PaddingValues(AppSpacing.xl)
+            ) {
+                Text(
+                    text = stringResource(R.string.preview_share_title),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(AppSpacing.xs))
+                Text(
+                    text = stringResource(R.string.preview_share_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(AppSpacing.lg))
+                PreviewQrContent(
+                    previewUrl = displayPreviewUrl,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(300.dp)
+                )
+                SecondaryButton(
+                    text = stringResource(R.string.dismiss),
+                    onClick = { showQrDialog = false },
+                    modifier = Modifier.padding(top = AppSpacing.lg)
+                )
+            }
         }
     }
 }

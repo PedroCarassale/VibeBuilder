@@ -14,7 +14,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material3.DropdownMenu
@@ -50,7 +49,7 @@ import com.vibebuilder.app.ui.components.AppCard
 import com.vibebuilder.app.ui.components.AppTopBar
 import com.vibebuilder.app.ui.components.EmptyView
 import com.vibebuilder.app.ui.components.ErrorView
-import com.vibebuilder.app.ui.components.LoadingView
+import com.vibebuilder.app.ui.components.ProjectListSkeleton
 import com.vibebuilder.app.ui.components.SectionHeader
 import com.vibebuilder.app.ui.components.StatusPill
 import com.vibebuilder.app.ui.theme.AppShapes
@@ -60,9 +59,8 @@ import com.vibebuilder.app.ui.theme.AppSpacing
 @Composable
 fun ProjectListScreen(
     onCreateProject: () -> Unit,
-    onOpenV0Settings: () -> Unit,
     onProjectClick: (String) -> Unit,
-    deletionConfirmed: Boolean = false,
+    deletionEventId: Long = 0L,
     onDeletionConfirmationShown: () -> Unit = {},
     viewModel: ProjectListViewModel = viewModel(factory = ProjectListViewModel.Factory)
 ) {
@@ -70,10 +68,10 @@ fun ProjectListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
 
-    LaunchedEffect(deletionConfirmed) {
-        if (deletionConfirmed) {
-            snackbarHostState.showSnackbar(context.getString(R.string.project_delete_success))
+    LaunchedEffect(deletionEventId) {
+        if (deletionEventId > 0L) {
             onDeletionConfirmationShown()
+            snackbarHostState.showSnackbar(context.getString(R.string.project_delete_success))
         }
     }
 
@@ -81,15 +79,7 @@ fun ProjectListScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             AppTopBar(
-                title = stringResource(R.string.project_list_title),
-                actions = {
-                    IconButton(onClick = onOpenV0Settings) {
-                        Icon(
-                            Icons.Default.Settings,
-                            contentDescription = stringResource(R.string.project_list_settings_cd)
-                        )
-                    }
-                }
+                title = stringResource(R.string.project_list_title)
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -117,7 +107,7 @@ fun ProjectListScreen(
     ) { padding ->
         Box(modifier = Modifier.fillMaxSize().padding(padding)) {
             when (val current = state) {
-                ProjectListUiState.Loading -> LoadingView()
+                ProjectListUiState.Loading -> ProjectListSkeleton()
                 is ProjectListUiState.Error -> ErrorView(
                     message = current.message,
                     onRetry = viewModel::retry
@@ -265,11 +255,5 @@ private fun ProjectCard(project: Project, onClick: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Spacer(Modifier.height(AppSpacing.md))
-        Text(
-            text = stringResource(R.string.project_card_tagline),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }

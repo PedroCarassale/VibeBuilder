@@ -12,15 +12,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -28,27 +25,23 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.vibebuilder.app.R
 import com.vibebuilder.app.domain.model.PromptMessage
 import com.vibebuilder.app.ui.components.AppCard
 import com.vibebuilder.app.ui.components.AppTextField
+import com.vibebuilder.app.ui.components.PixelStarLoader
 import com.vibebuilder.app.ui.components.PrimaryButton
 import com.vibebuilder.app.ui.components.PrimaryIconButton
 import com.vibebuilder.app.ui.components.StatusBanner
 import com.vibebuilder.app.ui.components.StatusPill
 import com.vibebuilder.app.ui.theme.AppShapes
 import com.vibebuilder.app.ui.theme.AppSpacing
-import kotlinx.coroutines.delay
 import kotlinx.datetime.Clock
 
 private const val OptimisticUserMessageId = "local-optimistic-user"
@@ -69,9 +62,6 @@ fun PromptTab(
     onDismissPreviewFeedback: () -> Unit
 ) {
     val listState = rememberLazyListState()
-    val thinkingVerbs = stringArrayResource(R.array.prompt_thinking_verbs).toList()
-    var thinkingVerbIndex by remember { mutableIntStateOf(0) }
-    var ellipsisPhase by remember { mutableIntStateOf(0) }
 
     val displayMessages = remember(messages, input.optimisticUserBubble, input.isSending, projectId) {
         val pending = input.optimisticUserBubble?.trim().orEmpty()
@@ -95,34 +85,10 @@ fun PromptTab(
         }
     }
 
-    LaunchedEffect(input.isSending) {
-        if (!input.isSending) return@LaunchedEffect
-        thinkingVerbIndex = 0
-        ellipsisPhase = 0
-        while (true) {
-            delay(2200)
-            thinkingVerbIndex = (thinkingVerbIndex + 1) % thinkingVerbs.size
-        }
-    }
-
-    LaunchedEffect(input.isSending) {
-        if (!input.isSending) return@LaunchedEffect
-        while (true) {
-            delay(420)
-            ellipsisPhase = (ellipsisPhase + 1) % 3
-        }
-    }
-
-    val ellipsis = when (ellipsisPhase) {
-        0 -> "."
-        1 -> ".."
-        else -> "..."
-    }
-
     val userMessages = remember(displayMessages) {
         displayMessages.filter { it.role == PromptMessage.Role.USER }
     }
-    val showAssistantCard = currentVersionNumber > 0 && userMessages.isNotEmpty()
+    val showAssistantCard = currentVersionNumber > 0 && userMessages.isNotEmpty() && !input.isSending
 
     val lastListIndex = userMessages.lastIndex +
         (if (showAssistantCard) 1 else 0) +
@@ -165,10 +131,7 @@ fun PromptTab(
             }
             if (input.isSending) {
                 item(key = "thinking") {
-                    ThinkingIndicator(
-                        verb = thinkingVerbs[thinkingVerbIndex],
-                        ellipsis = ellipsis
-                    )
+                    ThinkingIndicator()
                 }
             }
         }
@@ -235,28 +198,22 @@ private fun PromptEmptyCard() {
 }
 
 @Composable
-private fun ThinkingIndicator(verb: String, ellipsis: String) {
+private fun ThinkingIndicator() {
+    val container = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
     Surface(
         modifier = Modifier
             .fillMaxWidth(),
         shape = AppShapes.card,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        color = container,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = AppSpacing.lg, vertical = AppSpacing.md),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            CircularProgressIndicator(
-                strokeWidth = 2.dp,
-                modifier = Modifier.size(18.dp),
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.width(AppSpacing.md))
-            Text(
-                text = verb + ellipsis,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            PixelStarLoader(
+                containerColor = container,
+                showContainer = false
             )
         }
     }
