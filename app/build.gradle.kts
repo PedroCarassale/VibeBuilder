@@ -8,7 +8,7 @@ val apiBaseUrl: String =
     (project.findProperty("API_BASE_URL") as String?)
         ?.trim()
         ?.takeIf { it.isNotEmpty() }
-        ?: "http://10.0.2.2:3000"
+        ?: "https://vibe-builder-backend.vercel.app"
 
 android {
     namespace = "com.vibebuilder.app"

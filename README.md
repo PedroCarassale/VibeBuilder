@@ -41,7 +41,8 @@ Requisitos: Android Studio Koala/Ladybug+ (AGP 8.5+), JDK 17, Android SDK 35.
 3. Esperar a que Gradle sincronice.
 4. Seleccionar un emulador (API 24+) y ejecutar la configuración `app`.
 
-La app debug ya apunta al backend local con `API_BASE_URL=http://10.0.2.2:3000`, que es la dirección del host desde el emulador Android. Para un dispositivo físico, usar una URL accesible desde el teléfono, por ejemplo:
+La app en `main` apunta por defecto al backend hosteado: `https://vibe-builder-backend.vercel.app`.
+Para probar contra tu backend local desde el emulador Android, ejecutá Gradle con `-PAPI_BASE_URL=http://10.0.2.2:3000`, que es la dirección del host desde el emulador. Para un dispositivo físico, usar una URL accesible desde el teléfono, por ejemplo:
 
 ```powershell
 .\gradlew.bat installDebug -PAPI_BASE_URL=http://192.168.1.10:3000

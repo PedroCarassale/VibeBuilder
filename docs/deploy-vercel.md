@@ -101,9 +101,9 @@ API_BASE_URL=https://TU-PROYECTO.vercel.app
 
 | Entorno | `API_BASE_URL` típica |
 |---------|------------------------|
-| Emulador Android + backend en PC | `http://10.0.2.2:3000` (default si no defines nada) |
+| Emulador Android + backend en PC | `http://10.0.2.2:3000` usando `-PAPI_BASE_URL=http://10.0.2.2:3000` |
 | Dispositivo físico + backend en PC | `http://IP_DE_TU_PC:3000` |
-| APK / release contra Vercel | `https://TU-PROYECTO.vercel.app` (sin barra final) |
+| APK / release contra Vercel | `https://TU-PROYECTO.vercel.app` (sin barra final; default del proyecto: `https://vibe-builder-backend.vercel.app`) |
 
 Generar APK de release en Android Studio: **Build → Generate Signed Bundle / APK → APK**.
 
