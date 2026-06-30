@@ -1,9 +1,19 @@
-import { createRequire } from "node:module";
+let zipArchiveConstructorPromise = null;
 
-const require = createRequire(import.meta.url);
-const { ZipArchive } = require("archiver");
+async function loadZipArchiveConstructor() {
+  zipArchiveConstructorPromise ??= import("archiver").then(({ ZipArchive }) => {
+    if (typeof ZipArchive !== "function") {
+      throw new Error("archiver did not export ZipArchive.");
+    }
+    return ZipArchive;
+  });
+
+  return zipArchiveConstructorPromise;
+}
 
 export async function buildArtifactZipBuffer({ files, artifactStorage }) {
+  const ZipArchive = await loadZipArchiveConstructor();
+
   return new Promise((resolve, reject) => {
     const archive = new ZipArchive({ zlib: { level: 9 } });
     const chunks = [];
