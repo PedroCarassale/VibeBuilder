@@ -2,6 +2,8 @@ package com.vibebuilder.app.di
 
 import android.content.Context
 import com.vibebuilder.app.BuildConfig
+import com.vibebuilder.app.data.auth.AuthRepository
+import com.vibebuilder.app.data.auth.AuthTokenStore
 import com.vibebuilder.app.data.remote.HttpVibeBuilderApi
 import com.vibebuilder.app.data.remote.SharedPrefsSessionIdProvider
 import com.vibebuilder.app.data.repository.RemoteProjectRepository
@@ -27,8 +29,20 @@ object ServiceLocator {
         }
         HttpVibeBuilderApi(
             baseUrl = BuildConfig.API_BASE_URL,
-            sessionIdProvider = SharedPrefsSessionIdProvider(appContext)
+            sessionIdProvider = SharedPrefsSessionIdProvider(appContext),
+            authTokenProvider = authTokenStore::currentToken
         )
+    }
+
+    val authTokenStore: AuthTokenStore by lazy {
+        check(::appContext.isInitialized) {
+            "ServiceLocator must be initialized from Application.onCreate()"
+        }
+        AuthTokenStore(appContext)
+    }
+
+    val authRepository: AuthRepository by lazy {
+        AuthRepository(httpApi, authTokenStore)
     }
 
     val projectRepository: ProjectRepository by lazy {

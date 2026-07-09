@@ -3,14 +3,39 @@ export const MIGRATION_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
+      user_id TEXT,
       title TEXT NOT NULL,
       description TEXT,
       current_version_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      deleted_at TEXT
+      deleted_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     );`,
   `CREATE INDEX IF NOT EXISTS idx_projects_session_id ON projects (session_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects (user_id);`,
+  `CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      name TEXT,
+      avatar_url TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_login_at TEXT NOT NULL
+    );`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email);`,
+  `CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );`,
+  `CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash ON auth_sessions (token_hash);`,
+  `CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id ON auth_sessions (user_id);`,
   `CREATE TABLE IF NOT EXISTS project_versions (
       id TEXT PRIMARY KEY,
       project_id TEXT NOT NULL,
@@ -74,6 +99,13 @@ export const MIGRATION_STATEMENTS = [
       ciphertext TEXT NOT NULL,
       key_hint TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );`,
+  `CREATE TABLE IF NOT EXISTS user_v0_keys (
+      user_id TEXT PRIMARY KEY,
+      ciphertext TEXT NOT NULL,
+      key_hint TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );`,
   `CREATE TABLE IF NOT EXISTS version_artifacts (
       id TEXT PRIMARY KEY,
@@ -225,9 +257,23 @@ export async function applyMigrations(db) {
   if (!hasDeletedAtColumn) {
     await db.exec("ALTER TABLE projects ADD COLUMN deleted_at TEXT;");
   }
+  const hasUserIdColumn = projectColumns.some((column) => column.name === "user_id");
+  if (!hasUserIdColumn) {
+    await db.exec("ALTER TABLE projects ADD COLUMN user_id TEXT;");
+  }
+
+  const userColumns = await db.prepare("PRAGMA table_info(users);").all();
+  const hasPasswordHashColumn = userColumns.some((column) => column.name === "password_hash");
+  if (!hasPasswordHashColumn) {
+    await db.exec("ALTER TABLE users ADD COLUMN password_hash TEXT;");
+  }
 
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_active_session_updated
-    ON projects (session_id, updated_at DESC) WHERE deleted_at IS NULL;`);
+    ON projects (session_id, updated_at DESC) WHERE deleted_at IS NULL AND user_id IS NULL;`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_active_user_updated
+    ON projects (user_id, updated_at DESC) WHERE deleted_at IS NULL AND user_id IS NOT NULL;`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects (user_id);`);
+  await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email);`);
   await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_versions_project_version_unique
     ON project_versions (project_id, version_number);`);
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_project_versions_source_version_id

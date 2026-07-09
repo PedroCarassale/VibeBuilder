@@ -9,6 +9,8 @@ import com.vibebuilder.app.data.remote.ApiPromptResponse
 import com.vibebuilder.app.data.remote.ApiRequestException
 import com.vibebuilder.app.data.remote.ApiV0IntegrationStatus
 import com.vibebuilder.app.data.remote.VibeBuilderApi
+import com.vibebuilder.app.data.auth.AuthSession
+import com.vibebuilder.app.data.auth.AuthUser
 import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
 import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -259,6 +261,40 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
             )
         )
     )
+
+    override suspend fun register(name: String, email: String, password: String): AuthSession =
+        AuthSession(
+            token = "token",
+            expiresAt = "2026-02-01T00:00:00.000Z",
+            user = AuthUser(
+                id = "user-1",
+                email = email,
+                name = name,
+                avatarUrl = null
+            )
+        )
+
+    override suspend fun login(email: String, password: String): AuthSession =
+        AuthSession(
+            token = "token",
+            expiresAt = "2026-02-01T00:00:00.000Z",
+            user = AuthUser(
+                id = "user-1",
+                email = email,
+                name = "Ada",
+                avatarUrl = null
+            )
+        )
+
+    override suspend fun getCurrentUser(): AuthUser =
+        AuthUser(
+            id = "user-1",
+            email = "ada@example.com",
+            name = "Ada",
+            avatarUrl = null
+        )
+
+    override suspend fun logout() = Unit
 
     override suspend fun getProjects(): List<ApiProject> = projects.toList()
 

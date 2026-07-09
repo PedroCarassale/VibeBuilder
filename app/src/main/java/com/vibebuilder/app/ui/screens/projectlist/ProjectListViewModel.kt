@@ -3,15 +3,18 @@ package com.vibebuilder.app.ui.screens.projectlist
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.vibebuilder.app.data.auth.AuthSession
 import com.vibebuilder.app.di.ServiceLocator
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.repository.ProjectRepository
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -33,14 +36,18 @@ enum class ProjectSort { RecentlyUpdated, NameAscending, NewestCreated }
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProjectListViewModel(
-    repository: ProjectRepository = ServiceLocator.projectRepository
+    repository: ProjectRepository = ServiceLocator.projectRepository,
+    authSessionFlow: Flow<AuthSession?> = flowOf(null)
 ) : ViewModel() {
 
     private val reloadTrigger = MutableStateFlow(0)
     private val searchQuery = MutableStateFlow("")
     private val selectedSort = MutableStateFlow(ProjectSort.RecentlyUpdated)
 
-    private val projectsFlow = reloadTrigger
+    private val projectsFlow = combine(
+        reloadTrigger,
+        authSessionFlow
+    ) { reload, session -> reload to session }
         .flatMapLatest {
             repository.observeProjects()
                 .map<List<Project>, ProjectListUiState> {
@@ -91,7 +98,10 @@ class ProjectListViewModel(
         val Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                ProjectListViewModel() as T
+                ProjectListViewModel(
+                    repository = ServiceLocator.projectRepository,
+                    authSessionFlow = ServiceLocator.authRepository.session
+                ) as T
         }
     }
 }

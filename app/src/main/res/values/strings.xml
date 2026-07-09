@@ -17,6 +17,24 @@
     <string name="project_sort_newest_created">Creados recientemente</string>
     <string name="project_list_no_matches_title">No hay coincidencias</string>
     <string name="project_list_no_matches_subtitle">Prueba con otro nombre o descripción.</string>
+    <string name="project_list_account_cd">Cuenta</string>
+
+    <!-- Account -->
+    <string name="account_title">Cuenta</string>
+    <string name="account_guest_title">Modo invitado</string>
+    <string name="account_guest_subtitle">Puedes crear proyectos en este dispositivo o iniciar sesión con una cuenta de VibeBuilder.</string>
+    <string name="account_signed_in_title">Sesión activa</string>
+    <string name="account_signed_in_subtitle">Los proyectos se guardan en tu cuenta.</string>
+    <string name="account_guest_name">Invitado</string>
+    <string name="account_guest_email">Proyectos guardados solo para esta sesión del dispositivo.</string>
+    <string name="account_name_label">Nombre</string>
+    <string name="account_email_label">Email</string>
+    <string name="account_password_label">Contraseña</string>
+    <string name="account_login">Iniciar sesión</string>
+    <string name="account_register">Crear cuenta</string>
+    <string name="account_switch_to_login">Ya tengo cuenta</string>
+    <string name="account_switch_to_register">Crear una cuenta nueva</string>
+    <string name="account_logout">Cerrar sesión</string>
 
     <!-- Create project -->
     <string name="create_project_title">Nuevo proyecto</string>
@@ -124,9 +142,9 @@
     <string name="v0_settings_header_title">Conecta tu generación</string>
     <string name="v0_settings_header_subtitle">Guarda una API key de v0 para generar previews reales desde el backend.</string>
     <string name="v0_settings_status_title">Estado de conexión</string>
-    <string name="v0_settings_intro">La Platform API de v0 usa una API key que creas en tu cuenta (no se sustituye solo por iniciar sesión en Vercel). Puedes usar la key del servidor (V0_API_KEY) o guardar la tuya en este dispositivo: solo el backend la ve, cifrada.</string>
+    <string name="v0_settings_intro">La Platform API de v0 usa una API key que creas en tu cuenta (no se sustituye solo por iniciar sesión en Vercel). Puedes usar la key del servidor (V0_API_KEY) o guardar la tuya para tu cuenta o sesión invitada: solo el backend la ve, cifrada.</string>
     <string name="v0_settings_open_keys_page">Abrir v0 → Ajustes → API keys</string>
-    <string name="v0_settings_status_block">V0_API_KEY en el servidor: %1$s\nGuardado por sesión en servidor: %2$s\nKey propia (esta sesión): %3$s</string>
+    <string name="v0_settings_status_block">V0_API_KEY en el servidor: %1$s\nGuardado cifrado en servidor: %2$s\nKey propia activa: %3$s</string>
     <string name="v0_settings_yes">sí</string>
     <string name="v0_settings_no">no</string>
     <string name="v0_settings_session_active_masked">sí (detalle oculto)</string>

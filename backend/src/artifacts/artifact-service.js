@@ -15,7 +15,12 @@ export function createArtifactService({ db, artifactStorage }) {
   const findOwnedProjectStatement = db.prepare(`
     SELECT id
     FROM projects
-    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
+    WHERE id = ? AND deleted_at IS NULL
+      AND (
+        (? IS NOT NULL AND user_id = ?)
+        OR
+        (? IS NULL AND user_id IS NULL AND session_id = ?)
+      );
   `);
 
   const findArtifactByVersionStatement = db.prepare(`
@@ -162,8 +167,24 @@ export function createArtifactService({ db, artifactStorage }) {
     };
   }
 
-  async function prepareArtifactPayload({ projectId, sessionId, artifactSource }) {
-    const ownedProject = await findOwnedProjectStatement.get(projectId, sessionId);
+  function ownershipArgs(actor, sessionId) {
+    const resolved = actor ?? {
+      userId: null,
+      sessionId
+    };
+    return [
+      resolved.userId ?? null,
+      resolved.userId ?? null,
+      resolved.userId ?? null,
+      resolved.sessionId
+    ];
+  }
+
+  async function prepareArtifactPayload({ projectId, actor = null, sessionId = null, artifactSource }) {
+    const ownedProject = await findOwnedProjectStatement.get(
+      projectId,
+      ...ownershipArgs(actor, sessionId)
+    );
     if (!ownedProject) {
       throw new ArtifactPersistenceError({
         code: "PROJECT_NOT_FOUND",
@@ -281,8 +302,11 @@ export function createArtifactService({ db, artifactStorage }) {
     );
   }
 
-  async function getVersionArtifactDetail({ projectId, versionNumber, sessionId }) {
-    const ownedProject = await findOwnedProjectStatement.get(projectId, sessionId);
+  async function getVersionArtifactDetail({ projectId, versionNumber, actor = null, sessionId = null }) {
+    const ownedProject = await findOwnedProjectStatement.get(
+      projectId,
+      ...ownershipArgs(actor, sessionId)
+    );
     if (!ownedProject) return null;
 
     const artifactRow = await findArtifactByVersionStatement.get(projectId, versionNumber);
@@ -292,8 +316,8 @@ export function createArtifactService({ db, artifactStorage }) {
     return mapArtifactDetail(artifactRow, files);
   }
 
-  async function openVersionExport({ projectId, versionNumber, sessionId }) {
-    const detail = await getVersionArtifactDetail({ projectId, versionNumber, sessionId });
+  async function openVersionExport({ projectId, versionNumber, actor = null, sessionId = null }) {
+    const detail = await getVersionArtifactDetail({ projectId, versionNumber, actor, sessionId });
     if (!detail || detail.validationStatus !== "structural_ok") return null;
 
     const artifactRow = await findArtifactByVersionStatement.get(projectId, versionNumber);

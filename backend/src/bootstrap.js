@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createApp } from "./http-app.js";
 import { createDatabaseConnection } from "./database-connection.js";
 import { resolveGenerationProvider } from "./generation-provider.js";
-import { createSessionV0KeyStore } from "./session-v0-key-store.js";
+import { createSessionV0KeyStore, createUserV0KeyStore } from "./session-v0-key-store.js";
 
 const envPath = resolve(fileURLToPath(new URL("../.env", import.meta.url)));
 
@@ -38,9 +38,11 @@ export async function createBackendServer(options = {}) {
       ? process.env.V0_KEYSTORE_SECRET.trim()
       : "";
   let sessionV0KeyStore = null;
+  let userV0KeyStore = null;
   if (keystoreSecret.length >= 16) {
     try {
       sessionV0KeyStore = createSessionV0KeyStore({ db, keystoreSecret });
+      userV0KeyStore = createUserV0KeyStore({ db, keystoreSecret });
     } catch (error) {
       console.warn("[bootstrap] Could not init session v0 key store:", error?.message ?? error);
     }
@@ -55,6 +57,7 @@ export async function createBackendServer(options = {}) {
     db,
     generationProvider,
     sessionV0KeyStore,
+    userV0KeyStore,
     v0ApiBaseUrl,
     ...options.appOptions
   });

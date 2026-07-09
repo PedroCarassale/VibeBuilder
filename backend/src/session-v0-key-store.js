@@ -42,11 +42,7 @@ function makeKeyHint(trimmedKey) {
   return `****${trimmedKey.slice(-4)}`;
 }
 
-/**
- * Almacena la API key de v0 por sesión, cifrada en reposo (AES-256-GCM).
- * Requiere `V0_KEYSTORE_SECRET` en el servidor; la key en claro solo existe en memoria al generar o guardar.
- */
-export function createSessionV0KeyStore({ db, keystoreSecret }) {
+function createEncryptedV0KeyStore({ db, keystoreSecret, tableName, idColumn }) {
   if (typeof keystoreSecret !== "string" || keystoreSecret.length < 16) {
     throw new Error("keystoreSecret must be a string with length >= 16.");
   }
@@ -54,19 +50,19 @@ export function createSessionV0KeyStore({ db, keystoreSecret }) {
   const key = deriveAes256Key(keystoreSecret);
   const selectStmt = db.prepare(`
     SELECT ciphertext, key_hint
-    FROM session_v0_keys
-    WHERE session_id = ?;
+    FROM ${tableName}
+    WHERE ${idColumn} = ?;
   `);
   const upsertStmt = db.prepare(`
-    INSERT INTO session_v0_keys (session_id, ciphertext, key_hint, updated_at)
+    INSERT INTO ${tableName} (${idColumn}, ciphertext, key_hint, updated_at)
     VALUES (?, ?, ?, ?)
-    ON CONFLICT(session_id) DO UPDATE SET
+    ON CONFLICT(${idColumn}) DO UPDATE SET
       ciphertext = excluded.ciphertext,
       key_hint = excluded.key_hint,
       updated_at = excluded.updated_at;
   `);
   const deleteStmt = db.prepare(`
-    DELETE FROM session_v0_keys WHERE session_id = ?;
+    DELETE FROM ${tableName} WHERE ${idColumn} = ?;
   `);
 
   return {
@@ -113,4 +109,26 @@ export function createSessionV0KeyStore({ db, keystoreSecret }) {
       await deleteStmt.run(sessionId);
     }
   };
+}
+
+/**
+ * Almacena la API key de v0 por sesión, cifrada en reposo (AES-256-GCM).
+ * Requiere `V0_KEYSTORE_SECRET` en el servidor; la key en claro solo existe en memoria al generar o guardar.
+ */
+export function createSessionV0KeyStore({ db, keystoreSecret }) {
+  return createEncryptedV0KeyStore({
+    db,
+    keystoreSecret,
+    tableName: "session_v0_keys",
+    idColumn: "session_id"
+  });
+}
+
+export function createUserV0KeyStore({ db, keystoreSecret }) {
+  return createEncryptedV0KeyStore({
+    db,
+    keystoreSecret,
+    tableName: "user_v0_keys",
+    idColumn: "user_id"
+  });
 }

@@ -2,6 +2,8 @@ package com.vibebuilder.app.data.remote
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.vibebuilder.app.data.auth.AuthSession
+import com.vibebuilder.app.data.auth.AuthUser
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
@@ -80,6 +82,10 @@ interface SessionIdProvider {
     fun getSessionId(): String
 }
 
+fun interface AuthTokenProvider {
+    fun getAuthToken(): String?
+}
+
 data class ApiV0IntegrationStatus(
     val keyStorageAvailable: Boolean,
     val sessionKeyConfigured: Boolean,
@@ -88,6 +94,11 @@ data class ApiV0IntegrationStatus(
 )
 
 interface VibeBuilderApi {
+    suspend fun register(name: String, email: String, password: String): AuthSession
+    suspend fun login(email: String, password: String): AuthSession
+    suspend fun getCurrentUser(): AuthUser
+    suspend fun logout()
+
     suspend fun getProjects(): List<ApiProject>
     suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion>
     suspend fun getProjectPreview(
@@ -121,7 +132,8 @@ class ApiRequestException(
 
 class HttpVibeBuilderApi(
     private val baseUrl: String,
-    private val sessionIdProvider: SessionIdProvider
+    private val sessionIdProvider: SessionIdProvider,
+    private val authTokenProvider: AuthTokenProvider? = null
 ) : VibeBuilderApi {
 
     private companion object {
@@ -129,6 +141,43 @@ class HttpVibeBuilderApi(
         const val PROMPT_READ_TIMEOUT_MS = 300_000
         const val DEFAULT_CONNECT_TIMEOUT_MS = 30_000
         const val DEFAULT_READ_TIMEOUT_MS = 60_000
+    }
+
+    override suspend fun register(name: String, email: String, password: String): AuthSession = withContext(Dispatchers.IO) {
+        val response = request(
+            method = "POST",
+            path = "/auth/register",
+            body = JSONObject()
+                .put("name", name)
+                .put("email", email)
+                .put("password", password)
+                .toString(),
+            includeAuth = false
+        )
+        JSONObject(response.body).toAuthSession()
+    }
+
+    override suspend fun login(email: String, password: String): AuthSession = withContext(Dispatchers.IO) {
+        val response = request(
+            method = "POST",
+            path = "/auth/login",
+            body = JSONObject()
+                .put("email", email)
+                .put("password", password)
+                .toString(),
+            includeAuth = false
+        )
+        JSONObject(response.body).toAuthSession()
+    }
+
+    override suspend fun getCurrentUser(): AuthUser = withContext(Dispatchers.IO) {
+        val response = request(method = "GET", path = "/auth/me")
+        JSONObject(response.body).getJSONObject("user").toAuthUser()
+    }
+
+    override suspend fun logout() = withContext(Dispatchers.IO) {
+        request(method = "POST", path = "/auth/logout", body = "{}")
+        Unit
     }
 
     override suspend fun getProjects(): List<ApiProject> = withContext(Dispatchers.IO) {
@@ -382,7 +431,8 @@ class HttpVibeBuilderApi(
         path: String,
         body: String? = null,
         connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
-        readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS
+        readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
+        includeAuth: Boolean = true
     ): HttpResponse {
         val connection = (URL("${baseUrl.trimEnd('/')}$path").openConnection() as HttpURLConnection).apply {
             requestMethod = method
@@ -390,6 +440,11 @@ class HttpVibeBuilderApi(
             readTimeout = readTimeoutMs
             setRequestProperty("Accept", "application/json")
             setRequestProperty("X-Session-Id", sessionIdProvider.getSessionId())
+            if (includeAuth) {
+                authTokenProvider?.getAuthToken()?.trim()?.takeIf { it.isNotEmpty() }?.let { token ->
+                    setRequestProperty("Authorization", "Bearer $token")
+                }
+            }
             if (method == "POST" || method == "PUT" || method == "PATCH") {
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
                 setRequestProperty("X-Idempotency-Key", UUID.randomUUID().toString())
@@ -462,6 +517,19 @@ private fun JSONObject.toApiProject() = ApiProject(
     currentVersionId = optStringOrNull("currentVersionId"),
     createdAt = getString("createdAt"),
     updatedAt = getString("updatedAt")
+)
+
+private fun JSONObject.toAuthSession(): AuthSession = AuthSession(
+    token = getString("token"),
+    expiresAt = getString("expiresAt"),
+    user = getJSONObject("user").toAuthUser()
+)
+
+private fun JSONObject.toAuthUser(): AuthUser = AuthUser(
+    id = getString("id"),
+    email = optStringOrNull("email"),
+    name = optStringOrNull("name"),
+    avatarUrl = optStringOrNull("avatarUrl")
 )
 
 private fun JSONObject.optStringOrNull(key: String): String? =

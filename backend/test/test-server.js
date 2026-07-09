@@ -1,6 +1,7 @@
 import { createApp } from "../src/http-app.js";
 import { createDatabase } from "../src/db.js";
 import { wrapSqliteSyncDatabase } from "../src/database-connection.js";
+import { createSessionV0KeyStore, createUserV0KeyStore } from "../src/session-v0-key-store.js";
 import { withMockArtifactResult } from "./helpers/mock-generation-provider.js";
 
 function ensureArtifactAwareProvider(provider) {
@@ -31,6 +32,17 @@ export async function startTestServer(dbPath, appOptions = {}) {
       ? ensureArtifactAwareProvider(appOptions.generationProvider)
       : undefined
   };
+  if (typeof appOptions.v0KeyStoreSecret === "string") {
+    normalizedOptions.sessionV0KeyStore = createSessionV0KeyStore({
+      db,
+      keystoreSecret: appOptions.v0KeyStoreSecret
+    });
+    normalizedOptions.userV0KeyStore = createUserV0KeyStore({
+      db,
+      keystoreSecret: appOptions.v0KeyStoreSecret
+    });
+    delete normalizedOptions.v0KeyStoreSecret;
+  }
   const app = createApp({ db, ...normalizedOptions });
 
   await new Promise((resolve) => app.listen(0, resolve));

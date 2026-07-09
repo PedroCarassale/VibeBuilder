@@ -1,5 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
+import {
+  AUTH_REQUIRED_ERROR,
+  EMAIL_ALREADY_REGISTERED_ERROR,
+  INVALID_AUTH_CREDENTIALS_ERROR,
+  INVALID_LOGIN_BODY_ERROR,
+  INVALID_REGISTER_BODY_ERROR,
+  createAuthService
+} from "./auth.js";
 import { createArtifactService } from "./artifacts/artifact-service.js";
 import { streamArtifactZip } from "./artifacts/zip-export.js";
 import { resolveArtifactStorage } from "./artifacts/storage-factory.js";
@@ -13,6 +21,7 @@ import { testV0ApiConnection } from "./v0-connection-test.js";
 
 const SESSION_ID_HEADER = "x-session-id";
 const IDEMPOTENCY_KEY_HEADER = "x-idempotency-key";
+const AUTHORIZATION_HEADER = "authorization";
 const SESSION_REQUIRED_ERROR = {
   code: "SESSION_REQUIRED",
   message: "A valid X-Session-Id header is required."
@@ -114,6 +123,55 @@ function getValidSessionId(request, response) {
   }
 
   return sessionId;
+}
+
+function getBearerToken(request) {
+  const authorization = request.headers[AUTHORIZATION_HEADER];
+  if (typeof authorization !== "string") return null;
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  return match ? match[1].trim() : "";
+}
+
+async function getRequestActor(request, response, authService) {
+  const sessionId = getValidSessionId(request, response);
+  if (!sessionId) return null;
+
+  const bearerToken = getBearerToken(request);
+  if (bearerToken !== null) {
+    const authSession = await authService.resolveBearerToken(bearerToken);
+    if (!authSession) {
+      sendJson(response, 401, { error: AUTH_REQUIRED_ERROR });
+      return null;
+    }
+    return {
+      type: "user",
+      sessionId,
+      userId: authSession.user.id,
+      user: authSession.user,
+      authToken: bearerToken
+    };
+  }
+
+  return {
+    type: "guest",
+    sessionId,
+    userId: null,
+    user: null,
+    authToken: null
+  };
+}
+
+function actorProjectWhere(alias = "") {
+  const prefix = alias ? `${alias}.` : "";
+  return `(
+    (? IS NOT NULL AND ${prefix}user_id = ?)
+    OR
+    (? IS NULL AND ${prefix}user_id IS NULL AND ${prefix}session_id = ?)
+  )`;
+}
+
+function actorProjectArgs(actor) {
+  return [actor.userId, actor.userId, actor.userId, actor.sessionId];
 }
 
 function getValidIdempotencyKey(request, response) {
@@ -448,22 +506,23 @@ function buildGuardedGenerationPrompt(userPrompt) {
   ].join("\n");
 }
 
-function createProjectHandler(db, idempotencyStore, telemetryStore) {
+function createProjectHandler(db, idempotencyStore, telemetryStore, authService) {
   const insertProjectStatement = db.prepare(`
     INSERT INTO projects (
       id,
       session_id,
+      user_id,
       title,
       description,
       current_version_id,
       created_at,
       updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
   `);
 
   return async function handleCreateProject(request, response, endpoint) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
     const idempotencyKey = getValidIdempotencyKey(request, response);
     if (!idempotencyKey) return;
 
@@ -478,7 +537,7 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
     let idempotencyRecord;
     try {
       idempotencyRecord = await idempotencyStore.claim({
-        sessionId,
+        sessionId: actor.sessionId,
         endpoint,
         idempotencyKey,
         payloadHash: hashPayload(body)
@@ -517,7 +576,7 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
 
     const sendIdempotentResponse = async (statusCode, payload) => {
       await idempotencyStore.saveResponse({
-        sessionId,
+        sessionId: actor.sessionId,
         endpoint,
         idempotencyKey,
         statusCode,
@@ -536,7 +595,8 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
     const now = new Date().toISOString();
     await insertProjectStatement.run(
       projectId,
-      sessionId,
+      actor.sessionId,
+      actor.userId,
       validation.value.title,
       validation.value.hasDescription ? validation.value.description : null,
       null,
@@ -546,16 +606,16 @@ function createProjectHandler(db, idempotencyStore, telemetryStore) {
 
     safelyTrackTelemetry(telemetryStore, {
       eventName: "create",
-      sessionId,
+      sessionId: actor.sessionId,
       projectId,
-      metadata: { endpoint }
+      metadata: { endpoint, actorType: actor.type }
     });
 
     await sendIdempotentResponse(201, { projectId });
   };
 }
 
-function createListProjectsHandler(db) {
+function createListProjectsHandler(db, authService) {
   const listProjectsStatement = db.prepare(`
     SELECT
       id,
@@ -565,35 +625,37 @@ function createListProjectsHandler(db) {
       created_at,
       updated_at
     FROM projects
-    WHERE session_id = ? AND deleted_at IS NULL
+    WHERE deleted_at IS NULL
+      AND ${actorProjectWhere()}
     ORDER BY updated_at DESC;
   `);
 
   return async function handleListProjects(request, response) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
 
-    const rows = await listProjectsStatement.all(sessionId);
+    const rows = await listProjectsStatement.all(...actorProjectArgs(actor));
     const projects = rows.map(mapProject);
 
     sendJson(response, 200, projects);
   };
 }
 
-function createUpdateProjectHandler(db) {
+function createUpdateProjectHandler(db, authService) {
   const updateProjectStatement = db.prepare(`
     UPDATE projects
     SET
       title = CASE WHEN ? = 1 THEN ? ELSE title END,
       description = CASE WHEN ? = 1 THEN ? ELSE description END,
       updated_at = ?
-    WHERE id = ? AND session_id = ? AND deleted_at IS NULL
+    WHERE id = ? AND deleted_at IS NULL
+      AND ${actorProjectWhere()}
     RETURNING id, title, description, current_version_id, created_at, updated_at;
   `);
 
   return async function handleUpdateProject(request, response, projectId) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
 
     let body;
     try {
@@ -617,7 +679,7 @@ function createUpdateProjectHandler(db) {
       fields.description ?? null,
       new Date().toISOString(),
       projectId,
-      sessionId
+      ...actorProjectArgs(actor)
     );
     if (!row) {
       sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
@@ -627,19 +689,20 @@ function createUpdateProjectHandler(db) {
   };
 }
 
-function createDeleteProjectHandler(db) {
+function createDeleteProjectHandler(db, authService) {
   const deleteProjectStatement = db.prepare(`
     UPDATE projects
     SET deleted_at = ?, updated_at = ?
-    WHERE id = ? AND session_id = ? AND deleted_at IS NULL
+    WHERE id = ? AND deleted_at IS NULL
+      AND ${actorProjectWhere()}
     RETURNING id;
   `);
 
   return async function handleDeleteProject(request, response, projectId) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
     const now = new Date().toISOString();
-    const deleted = await deleteProjectStatement.get(now, now, projectId, sessionId);
+    const deleted = await deleteProjectStatement.get(now, now, projectId, ...actorProjectArgs(actor));
     if (!deleted) {
       sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
       return;
@@ -654,10 +717,11 @@ function createGenerationAttemptExecutor(
   resolveGenerationService,
   artifactService
 ) {
-  const findProjectBySessionStatement = db.prepare(`
+  const findProjectByActorStatement = db.prepare(`
     SELECT id, current_version_id
     FROM projects
-    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
+    WHERE id = ? AND deleted_at IS NULL
+      AND ${actorProjectWhere()};
   `);
   const findCurrentVersionMetaStatement = db.prepare(`
     SELECT provider_meta
@@ -711,18 +775,18 @@ function createGenerationAttemptExecutor(
   `);
 
   return async function executeGenerationAttempt({
-    sessionId,
+    actor,
     projectId,
     prompt,
     sourceVersionId = null,
     attemptNumber = 1
   }) {
-    const project = await findProjectBySessionStatement.get(projectId, sessionId);
+    const project = await findProjectByActorStatement.get(projectId, ...actorProjectArgs(actor));
     if (!project) {
       return { type: "not_found" };
     }
 
-    const generationService = await resolveGenerationService(sessionId);
+    const generationService = await resolveGenerationService(actor);
 
     const promptMessageId = randomUUID();
     const assistantPromptMessageId = randomUUID();
@@ -744,7 +808,7 @@ function createGenerationAttemptExecutor(
       generationResult = await generationService.provider.generate({
         projectId,
         prompt: generationPrompt,
-        sessionId,
+        sessionId: actor.sessionId,
         chatId: generationService.provider.name === "v0" ? existingV0ChatId : null
       });
 
@@ -759,7 +823,7 @@ function createGenerationAttemptExecutor(
         try {
           preparedArtifact = await artifactService.prepareArtifactPayload({
             projectId,
-            sessionId,
+            actor,
             artifactSource: generationResult.artifactSource
           });
           if (preparedArtifact?.artifactSource?.previewUrl) {
@@ -889,20 +953,21 @@ function createGenerationAttemptExecutor(
 
     safelyTrackTelemetry(telemetryStore, {
       eventName: "iterate",
-      sessionId,
+      sessionId: actor.sessionId,
       projectId,
       versionId: projectVersionId,
-      metadata: { versionNumber, status }
+      metadata: { versionNumber, status, actorType: actor.type }
     });
     safelyTrackTelemetry(telemetryStore, {
       eventName: status === "success" ? "generate" : "fail",
-      sessionId,
+      sessionId: actor.sessionId,
       projectId,
       versionId: projectVersionId,
       metadata: {
         versionNumber,
         status,
-        errorCode: providerMeta?.errorCode ?? null
+        errorCode: providerMeta?.errorCode ?? null,
+        actorType: actor.type
       }
     });
 
@@ -924,11 +989,12 @@ function createGenerationAttemptExecutor(
 
 function createCreatePromptHandler(
   idempotencyStore,
-  executeGenerationAttempt
+  executeGenerationAttempt,
+  authService
 ) {
   return async function handleCreatePrompt(request, response, projectId, endpoint) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
     const idempotencyKey = getValidIdempotencyKey(request, response);
     if (!idempotencyKey) return;
 
@@ -943,7 +1009,7 @@ function createCreatePromptHandler(
     let idempotencyRecord;
     try {
       idempotencyRecord = await idempotencyStore.claim({
-        sessionId,
+        sessionId: actor.sessionId,
         endpoint,
         idempotencyKey,
         payloadHash: hashPayload(body)
@@ -982,7 +1048,7 @@ function createCreatePromptHandler(
 
     const sendIdempotentResponse = async (statusCode, payload) => {
       await idempotencyStore.saveResponse({
-        sessionId,
+        sessionId: actor.sessionId,
         endpoint,
         idempotencyKey,
         statusCode,
@@ -998,7 +1064,7 @@ function createCreatePromptHandler(
     }
 
     const result = await executeGenerationAttempt({
-      sessionId,
+      actor,
       projectId,
       prompt
     });
@@ -1023,7 +1089,8 @@ function createCreatePromptHandler(
 function createRegenerateVersionHandler(
   db,
   idempotencyStore,
-  executeGenerationAttempt
+  executeGenerationAttempt,
+  authService
 ) {
   const findSourceVersionStatement = db.prepare(`
     SELECT
@@ -1036,13 +1103,13 @@ function createRegenerateVersionHandler(
     INNER JOIN projects p ON p.id = v.project_id
     WHERE p.id = ?
       AND v.id = ?
-      AND p.session_id = ?
-      AND p.deleted_at IS NULL;
+      AND p.deleted_at IS NULL
+      AND ${actorProjectWhere("p")};
   `);
 
   return async function handleRegenerateVersion(request, response, projectId, versionId, endpoint) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
     const idempotencyKey = getValidIdempotencyKey(request, response);
     if (!idempotencyKey) return;
 
@@ -1057,7 +1124,7 @@ function createRegenerateVersionHandler(
     let idempotencyRecord;
     try {
       idempotencyRecord = await idempotencyStore.claim({
-        sessionId,
+        sessionId: actor.sessionId,
         endpoint,
         idempotencyKey,
         payloadHash: hashPayload(body)
@@ -1096,7 +1163,7 @@ function createRegenerateVersionHandler(
 
     const sendIdempotentResponse = async (statusCode, payload) => {
       await idempotencyStore.saveResponse({
-        sessionId,
+        sessionId: actor.sessionId,
         endpoint,
         idempotencyKey,
         statusCode,
@@ -1110,7 +1177,11 @@ function createRegenerateVersionHandler(
       return;
     }
 
-    const sourceVersion = await findSourceVersionStatement.get(projectId, versionId, sessionId);
+    const sourceVersion = await findSourceVersionStatement.get(
+      projectId,
+      versionId,
+      ...actorProjectArgs(actor)
+    );
     if (!sourceVersion) {
       await sendIdempotentResponse(404, { error: VERSION_NOT_FOUND_ERROR });
       return;
@@ -1130,7 +1201,7 @@ function createRegenerateVersionHandler(
     }
 
     const result = await executeGenerationAttempt({
-      sessionId,
+      actor,
       projectId,
       prompt,
       sourceVersionId: sourceVersion.id,
@@ -1154,11 +1225,12 @@ function createRegenerateVersionHandler(
   };
 }
 
-function createListProjectMessagesHandler(db) {
-  const findProjectBySessionStatement = db.prepare(`
+function createListProjectMessagesHandler(db, authService) {
+  const findProjectByActorStatement = db.prepare(`
     SELECT id
     FROM projects
-    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
+    WHERE id = ? AND deleted_at IS NULL
+      AND ${actorProjectWhere()};
   `);
   const listMessagesStatement = db.prepare(`
     SELECT
@@ -1176,10 +1248,10 @@ function createListProjectMessagesHandler(db) {
   `);
 
   return async function handleListProjectMessages(request, response, projectId) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
 
-    const project = await findProjectBySessionStatement.get(projectId, sessionId);
+    const project = await findProjectByActorStatement.get(projectId, ...actorProjectArgs(actor));
     if (!project) {
       sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
       return;
@@ -1199,11 +1271,12 @@ function createListProjectMessagesHandler(db) {
   };
 }
 
-function createListProjectVersionsHandler(db, artifactService) {
-  const findProjectBySessionStatement = db.prepare(`
+function createListProjectVersionsHandler(db, artifactService, authService) {
+  const findProjectByActorStatement = db.prepare(`
     SELECT id
     FROM projects
-    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
+    WHERE id = ? AND deleted_at IS NULL
+      AND ${actorProjectWhere()};
   `);
   const listVersionsStatement = db.prepare(`
     SELECT
@@ -1226,10 +1299,10 @@ function createListProjectVersionsHandler(db, artifactService) {
   `);
 
   return async function handleListProjectVersions(request, response, projectId) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
 
-    const project = await findProjectBySessionStatement.get(projectId, sessionId);
+    const project = await findProjectByActorStatement.get(projectId, ...actorProjectArgs(actor));
     if (!project) {
       sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
       return;
@@ -1256,10 +1329,10 @@ function createListProjectVersionsHandler(db, artifactService) {
   };
 }
 
-function createGetProjectVersionDetailHandler(db, artifactService) {
+function createGetProjectVersionDetailHandler(db, artifactService, authService) {
   return async function handleGetProjectVersionDetail(request, response, projectId, versionNumber) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
 
     const parsedVersionNumber = Number.parseInt(versionNumber, 10);
     if (!Number.isFinite(parsedVersionNumber) || parsedVersionNumber <= 0) {
@@ -1290,7 +1363,7 @@ function createGetProjectVersionDetailHandler(db, artifactService) {
     const artifact = await artifactService.getVersionArtifactDetail({
       projectId,
       versionNumber: parsedVersionNumber,
-      sessionId
+      actor
     });
 
     if (!versionRow || !artifact) {
@@ -1316,10 +1389,10 @@ function createGetProjectVersionDetailHandler(db, artifactService) {
   };
 }
 
-function createExportProjectVersionHandler(artifactService) {
+function createExportProjectVersionHandler(artifactService, authService) {
   return async function handleExportProjectVersion(request, response, projectId, versionNumber) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
 
     const parsedVersionNumber = Number.parseInt(versionNumber, 10);
     if (!Number.isFinite(parsedVersionNumber) || parsedVersionNumber <= 0) {
@@ -1330,7 +1403,7 @@ function createExportProjectVersionHandler(artifactService) {
     const exportPayload = await artifactService.openVersionExport({
       projectId,
       versionNumber: parsedVersionNumber,
-      sessionId
+      actor
     });
 
     if (!exportPayload) {
@@ -1347,11 +1420,12 @@ function createExportProjectVersionHandler(artifactService) {
   };
 }
 
-function createGetProjectPreviewHandler(db, telemetryStore) {
-  const findProjectBySessionStatement = db.prepare(`
+function createGetProjectPreviewHandler(db, telemetryStore, authService) {
+  const findProjectByActorStatement = db.prepare(`
     SELECT id, current_version_id
     FROM projects
-    WHERE id = ? AND session_id = ? AND deleted_at IS NULL;
+    WHERE id = ? AND deleted_at IS NULL
+      AND ${actorProjectWhere()};
   `);
   const findVersionByIdStatement = db.prepare(`
     SELECT
@@ -1375,10 +1449,10 @@ function createGetProjectPreviewHandler(db, telemetryStore) {
   `);
 
   return async function handleGetProjectPreview(request, response, projectId, requestUrl) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
 
-    const project = await findProjectBySessionStatement.get(projectId, sessionId);
+    const project = await findProjectByActorStatement.get(projectId, ...actorProjectArgs(actor));
     if (!project) {
       sendJson(response, 404, { error: PROJECT_NOT_FOUND_ERROR });
       return;
@@ -1435,7 +1509,7 @@ function createGetProjectPreviewHandler(db, telemetryStore) {
 
     safelyTrackTelemetry(telemetryStore, {
       eventName: "preview",
-      sessionId,
+      sessionId: actor.sessionId,
       projectId,
       versionId: version.id,
       metadata: {
@@ -1456,29 +1530,36 @@ function createGetProjectPreviewHandler(db, telemetryStore) {
 
 function createGenerationServiceResolver({
   sessionV0KeyStore,
+  userV0KeyStore,
   generationProvider,
   v0ApiBaseUrl,
   sessionGenerationProviderFactory
 }) {
   const defaultProvider = generationProvider ?? createMockV0Provider();
 
-  return async function resolveGenerationService(sessionId) {
-    if (sessionV0KeyStore?.isEnabled) {
-      const plain = await sessionV0KeyStore.getDecryptedApiKey(sessionId);
-      if (typeof plain === "string" && plain.trim().length > 0) {
-        const trimmed = plain.trim();
-        const baseUrl =
-          typeof v0ApiBaseUrl === "string" && v0ApiBaseUrl.trim().length > 0
-            ? v0ApiBaseUrl.trim()
-            : undefined;
-        const provider =
-          typeof sessionGenerationProviderFactory === "function"
-            ? sessionGenerationProviderFactory(trimmed, baseUrl)
-            : createV0Provider(
-                baseUrl ? { apiKey: trimmed, baseUrl } : { apiKey: trimmed }
-              );
-        return { provider };
-      }
+  return async function resolveGenerationService(actor) {
+    const userKey =
+      actor?.userId && userV0KeyStore?.isEnabled
+        ? await userV0KeyStore.getDecryptedApiKey(actor.userId)
+        : null;
+    const sessionKey =
+      sessionV0KeyStore?.isEnabled
+        ? await sessionV0KeyStore.getDecryptedApiKey(actor.sessionId)
+        : null;
+    const plain = userKey || sessionKey;
+    if (typeof plain === "string" && plain.trim().length > 0) {
+      const trimmed = plain.trim();
+      const baseUrl =
+        typeof v0ApiBaseUrl === "string" && v0ApiBaseUrl.trim().length > 0
+          ? v0ApiBaseUrl.trim()
+          : undefined;
+      const provider =
+        typeof sessionGenerationProviderFactory === "function"
+          ? sessionGenerationProviderFactory(trimmed, baseUrl)
+          : createV0Provider(
+              baseUrl ? { apiKey: trimmed, baseUrl } : { apiKey: trimmed }
+            );
+      return { provider };
     }
 
     return { provider: defaultProvider };
@@ -1487,31 +1568,51 @@ function createGenerationServiceResolver({
 
 function createV0IntegrationHandlers({
   sessionV0KeyStore,
+  userV0KeyStore,
   defaultGenerationProvider,
-  v0ApiBaseUrl
+  v0ApiBaseUrl,
+  authService
 }) {
-  async function handleGetV0Integration(request, response) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+  function selectV0KeyStore(actor) {
+    if (actor.type === "user") {
+      return {
+        store: userV0KeyStore,
+        ownerId: actor.userId,
+        ownerType: "user"
+      };
+    }
+    return {
+      store: sessionV0KeyStore,
+      ownerId: actor.sessionId,
+      ownerType: "session"
+    };
+  }
 
-    const storageAvailable = Boolean(sessionV0KeyStore?.isEnabled);
+  async function handleGetV0Integration(request, response) {
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
+
+    const selected = selectV0KeyStore(actor);
+    const storageAvailable = Boolean(selected.store?.isEnabled);
     const sessionStatus = storageAvailable
-      ? await sessionV0KeyStore.getStatus(sessionId)
+      ? await selected.store.getStatus(selected.ownerId)
       : { configured: false, keyHint: null };
 
     sendJson(response, 200, {
       keyStorageAvailable: storageAvailable,
       sessionKeyConfigured: sessionStatus.configured,
       sessionKeyHint: sessionStatus.keyHint,
-      envKeyActive: defaultGenerationProvider?.name === "v0"
+      envKeyActive: defaultGenerationProvider?.name === "v0",
+      ownerType: selected.ownerType
     });
   }
 
   async function handlePutV0Integration(request, response) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
+    const selected = selectV0KeyStore(actor);
 
-    if (!sessionV0KeyStore?.isEnabled) {
+    if (!selected.store?.isEnabled) {
       sendJson(response, 503, { error: KEYSTORE_UNAVAILABLE_ERROR });
       return;
     }
@@ -1531,7 +1632,7 @@ function createV0IntegrationHandlers({
     }
 
     try {
-      await sessionV0KeyStore.save(sessionId, apiKey);
+      await selected.store.save(selected.ownerId, apiKey);
     } catch (error) {
       sendJson(response, 400, {
         error: {
@@ -1546,21 +1647,23 @@ function createV0IntegrationHandlers({
   }
 
   async function handleDeleteV0Integration(request, response) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
+    const selected = selectV0KeyStore(actor);
 
-    if (!sessionV0KeyStore?.isEnabled) {
+    if (!selected.store?.isEnabled) {
       sendJson(response, 503, { error: KEYSTORE_UNAVAILABLE_ERROR });
       return;
     }
 
-    await sessionV0KeyStore.delete(sessionId);
+    await selected.store.delete(selected.ownerId);
     sendJson(response, 204);
   }
 
   async function handlePostV0IntegrationTest(request, response) {
-    const sessionId = getValidSessionId(request, response);
-    if (!sessionId) return;
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
+    const selected = selectV0KeyStore(actor);
 
     let body = {};
     try {
@@ -1574,11 +1677,11 @@ function createV0IntegrationHandlers({
       typeof body.apiKey === "string" && body.apiKey.trim().length > 0 ? body.apiKey.trim() : null;
 
     if (!candidate) {
-      if (!sessionV0KeyStore?.isEnabled) {
+      if (!selected.store?.isEnabled) {
         sendJson(response, 503, { error: KEYSTORE_UNAVAILABLE_ERROR });
         return;
       }
-      candidate = await sessionV0KeyStore.getDecryptedApiKey(sessionId);
+      candidate = await selected.store.getDecryptedApiKey(selected.ownerId);
       if (!candidate?.trim()) {
         sendJson(response, 400, { error: NO_STORED_V0_KEY_ERROR });
         return;
@@ -1613,6 +1716,113 @@ function createV0IntegrationHandlers({
   };
 }
 
+function createAuthHandlers(authService) {
+  async function handlePostRegister(request, response) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    let body;
+    try {
+      body = await parseJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: INVALID_JSON_ERROR });
+      return;
+    }
+
+    const result = await authService.register({
+      email: body.email,
+      password: body.password,
+      name: body.name
+    });
+    if (result.type === "invalid_body") {
+      sendJson(response, 400, { error: INVALID_REGISTER_BODY_ERROR });
+      return;
+    }
+    if (result.type === "email_exists") {
+      sendJson(response, 409, { error: EMAIL_ALREADY_REGISTERED_ERROR });
+      return;
+    }
+
+    sendJson(response, 201, {
+      token: result.token,
+      expiresAt: result.expiresAt,
+      user: result.user
+    });
+  }
+
+  async function handlePostLogin(request, response) {
+    const sessionId = getValidSessionId(request, response);
+    if (!sessionId) return;
+
+    let body;
+    try {
+      body = await parseJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: INVALID_JSON_ERROR });
+      return;
+    }
+
+    const result = await authService.login({
+      email: body.email,
+      password: body.password
+    });
+    if (result.type === "invalid_body") {
+      sendJson(response, 400, { error: INVALID_LOGIN_BODY_ERROR });
+      return;
+    }
+    if (result.type !== "signed_in") {
+      sendJson(response, 401, { error: INVALID_AUTH_CREDENTIALS_ERROR });
+      return;
+    }
+
+    sendJson(response, 200, {
+      token: result.token,
+      expiresAt: result.expiresAt,
+      user: result.user
+    });
+  }
+
+  async function handleGetMe(request, response) {
+    const bearerToken = getBearerToken(request);
+    if (bearerToken === null) {
+      sendJson(response, 401, { error: AUTH_REQUIRED_ERROR });
+      return;
+    }
+    const authSession = await authService.resolveBearerToken(bearerToken);
+    if (!authSession) {
+      sendJson(response, 401, { error: AUTH_REQUIRED_ERROR });
+      return;
+    }
+
+    sendJson(response, 200, {
+      user: authSession.user
+    });
+  }
+
+  async function handlePostLogout(request, response) {
+    const bearerToken = getBearerToken(request);
+    if (bearerToken === null) {
+      sendJson(response, 401, { error: AUTH_REQUIRED_ERROR });
+      return;
+    }
+    const authSession = await authService.resolveBearerToken(bearerToken);
+    if (!authSession) {
+      sendJson(response, 401, { error: AUTH_REQUIRED_ERROR });
+      return;
+    }
+
+    await authService.revokeBearerToken(bearerToken);
+    sendJson(response, 204);
+  }
+
+  return {
+    handlePostRegister,
+    handlePostLogin,
+    handleGetMe,
+    handlePostLogout
+  };
+}
+
 function createGetTelemetrySummaryHandler(telemetryStore) {
   return async function handleGetTelemetrySummary(request, response) {
     const sessionId = getValidSessionId(request, response);
@@ -1627,24 +1837,32 @@ export function createApp({
   db,
   generationProvider,
   sessionV0KeyStore = null,
+  userV0KeyStore = null,
   v0ApiBaseUrl,
   sessionGenerationProviderFactory = null,
-  artifactStorage = null
+  artifactStorage = null,
+  authTokenTtlMs
 } = {}) {
   const idempotencyStore = createIdempotencyStore(db);
   const telemetryStore = createTelemetryStore(db);
+  const authService = createAuthService({
+    db,
+    tokenTtlMs: authTokenTtlMs
+  });
   const resolvedArtifactStorage = artifactStorage ?? resolveArtifactStorage();
   const artifactService = createArtifactService({
     db,
     artifactStorage: resolvedArtifactStorage
   });
-  const handleCreateProject = createProjectHandler(db, idempotencyStore, telemetryStore);
-  const handleListProjects = createListProjectsHandler(db);
-  const handleUpdateProject = createUpdateProjectHandler(db);
-  const handleDeleteProject = createDeleteProjectHandler(db);
+  const authHandlers = createAuthHandlers(authService);
+  const handleCreateProject = createProjectHandler(db, idempotencyStore, telemetryStore, authService);
+  const handleListProjects = createListProjectsHandler(db, authService);
+  const handleUpdateProject = createUpdateProjectHandler(db, authService);
+  const handleDeleteProject = createDeleteProjectHandler(db, authService);
   const defaultGenerationProvider = generationProvider ?? createMockV0Provider();
   const resolveGenerationService = createGenerationServiceResolver({
     sessionV0KeyStore,
+    userV0KeyStore,
     generationProvider,
     v0ApiBaseUrl,
     sessionGenerationProviderFactory
@@ -1657,23 +1875,27 @@ export function createApp({
   );
   const handleCreatePrompt = createCreatePromptHandler(
     idempotencyStore,
-    executeGenerationAttempt
+    executeGenerationAttempt,
+    authService
   );
   const handleRegenerateVersion = createRegenerateVersionHandler(
     db,
     idempotencyStore,
-    executeGenerationAttempt
+    executeGenerationAttempt,
+    authService
   );
-  const handleListProjectMessages = createListProjectMessagesHandler(db);
-  const handleListProjectVersions = createListProjectVersionsHandler(db, artifactService);
-  const handleGetProjectVersionDetail = createGetProjectVersionDetailHandler(db, artifactService);
-  const handleExportProjectVersion = createExportProjectVersionHandler(artifactService);
-  const handleGetProjectPreview = createGetProjectPreviewHandler(db, telemetryStore);
+  const handleListProjectMessages = createListProjectMessagesHandler(db, authService);
+  const handleListProjectVersions = createListProjectVersionsHandler(db, artifactService, authService);
+  const handleGetProjectVersionDetail = createGetProjectVersionDetailHandler(db, artifactService, authService);
+  const handleExportProjectVersion = createExportProjectVersionHandler(artifactService, authService);
+  const handleGetProjectPreview = createGetProjectPreviewHandler(db, telemetryStore, authService);
   const handleGetTelemetrySummary = createGetTelemetrySummaryHandler(telemetryStore);
   const v0IntegrationHandlers = createV0IntegrationHandlers({
     sessionV0KeyStore,
+    userV0KeyStore,
     defaultGenerationProvider,
-    v0ApiBaseUrl
+    v0ApiBaseUrl,
+    authService
   });
 
   return createServer(async (request, response) => {
@@ -1687,6 +1909,26 @@ export function createApp({
     const versionExportMatch = /^\/projects\/([^/]+)\/versions\/(\d+)\/export$/.exec(path);
     const projectPreviewMatch = /^\/projects\/([^/]+)\/preview$/.exec(path);
     const projectMatch = /^\/projects\/([^/]+)$/.exec(path);
+
+    if (request.method === "POST" && path === "/auth/register") {
+      await authHandlers.handlePostRegister(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && path === "/auth/login") {
+      await authHandlers.handlePostLogin(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && path === "/auth/me") {
+      await authHandlers.handleGetMe(request, response);
+      return;
+    }
+
+    if (request.method === "POST" && path === "/auth/logout") {
+      await authHandlers.handlePostLogout(request, response);
+      return;
+    }
 
     if (request.method === "POST" && path === "/projects") {
       await handleCreateProject(request, response, path);

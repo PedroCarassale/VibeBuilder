@@ -10,6 +10,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.vibebuilder.app.ui.screens.account.AccountScreen
 import com.vibebuilder.app.ui.screens.createproject.CreateProjectScreen
 import com.vibebuilder.app.ui.screens.projectdetail.ProjectDetailScreen
 import com.vibebuilder.app.ui.screens.projectlist.ProjectListScreen
@@ -34,12 +35,17 @@ fun VibeNavGraph() {
         composable(Screen.ProjectList.route) {
             ProjectListScreen(
                 onCreateProject = { navController.navigate(Screen.CreateProject.route) },
+                onAccountClick = { navController.navigate(Screen.Account.route) },
                 onProjectClick = { projectId ->
                     navController.navigate(Screen.ProjectDetail.routeFor(projectId))
                 },
                 deletionEventId = deletionEventId,
                 onDeletionConfirmationShown = { deletionEventId = 0L }
             )
+        }
+
+        composable(Screen.Account.route) {
+            AccountScreen(onBack = ::navigateHome)
         }
 
         composable(Screen.CreateProject.route) {

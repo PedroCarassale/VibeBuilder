@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.automirrored.filled.Sort
@@ -59,6 +60,7 @@ import com.vibebuilder.app.ui.theme.AppSpacing
 @Composable
 fun ProjectListScreen(
     onCreateProject: () -> Unit,
+    onAccountClick: () -> Unit,
     onProjectClick: (String) -> Unit,
     deletionEventId: Long = 0L,
     onDeletionConfirmationShown: () -> Unit = {},
@@ -79,7 +81,15 @@ fun ProjectListScreen(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             AppTopBar(
-                title = stringResource(R.string.project_list_title)
+                title = stringResource(R.string.project_list_title),
+                actions = {
+                    IconButton(onClick = onAccountClick) {
+                        Icon(
+                            Icons.Default.AccountCircle,
+                            contentDescription = stringResource(R.string.project_list_account_cd)
+                        )
+                    }
+                }
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },

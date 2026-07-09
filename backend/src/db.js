@@ -17,16 +17,49 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
     CREATE TABLE IF NOT EXISTS projects (
       id TEXT PRIMARY KEY,
       session_id TEXT NOT NULL,
+      user_id TEXT,
       title TEXT NOT NULL,
       description TEXT,
       current_version_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      deleted_at TEXT
+      deleted_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_projects_session_id
       ON projects (session_id);
+    CREATE INDEX IF NOT EXISTS idx_projects_user_id
+      ON projects (user_id);
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      name TEXT,
+      avatar_url TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_login_at TEXT NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
+      ON users (email);
+
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      revoked_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_token_hash
+      ON auth_sessions (token_hash);
+    CREATE INDEX IF NOT EXISTS idx_auth_sessions_user_id
+      ON auth_sessions (user_id);
 
     CREATE TABLE IF NOT EXISTS project_versions (
       id TEXT PRIMARY KEY,
@@ -103,6 +136,14 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
       ciphertext TEXT NOT NULL,
       key_hint TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS user_v0_keys (
+      user_id TEXT PRIMARY KEY,
+      ciphertext TEXT NOT NULL,
+      key_hint TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS version_artifacts (
@@ -246,11 +287,28 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
   if (!hasDeletedAtColumn) {
     db.exec("ALTER TABLE projects ADD COLUMN deleted_at TEXT;");
   }
+  const hasUserIdColumn = projectColumns.some((column) => column.name === "user_id");
+  if (!hasUserIdColumn) {
+    db.exec("ALTER TABLE projects ADD COLUMN user_id TEXT;");
+  }
+
+  const userColumns = db.prepare("PRAGMA table_info(users);").all();
+  const hasPasswordHashColumn = userColumns.some((column) => column.name === "password_hash");
+  if (!hasPasswordHashColumn) {
+    db.exec("ALTER TABLE users ADD COLUMN password_hash TEXT;");
+  }
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_projects_active_session_updated
       ON projects (session_id, updated_at DESC)
-      WHERE deleted_at IS NULL;
+      WHERE deleted_at IS NULL AND user_id IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_projects_active_user_updated
+      ON projects (user_id, updated_at DESC)
+      WHERE deleted_at IS NULL AND user_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_projects_user_id
+      ON projects (user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
+      ON users (email);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_versions_project_version_unique
       ON project_versions (project_id, version_number);
     CREATE INDEX IF NOT EXISTS idx_project_versions_source_version_id

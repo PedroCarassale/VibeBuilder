@@ -9,6 +9,7 @@ package com.vibebuilder.app.ui.navigation
 sealed class Screen(val route: String) {
     data object ProjectList : Screen("projects")
     data object CreateProject : Screen("projects/create")
+    data object Account : Screen("account")
     data object ProjectDetail : Screen("projects/{projectId}") {
         const val ARG_PROJECT_ID: String = "projectId"
         fun routeFor(projectId: String): String = "projects/$projectId"
