@@ -42,6 +42,9 @@ backend/backend/data/
 *.db-wal
 *.db-shm
 
+# Local delivery conversation logs
+docs/delivery-3-conversations/
+
 # OS
 .DS_Store
 Thumbs.db
