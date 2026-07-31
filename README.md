@@ -90,21 +90,23 @@ app/src/main/java/com/vibebuilder/app/
    ```
    Ningún archivo de UI tiene que tocarse: las pantallas dependen únicamente de la interfaz `ProjectRepository`.
 
-## Pantallas (Delivery 1)
+## Pantallas principales
 
 | Pantalla            | Estado                                                                 |
 |---------------------|------------------------------------------------------------------------|
 | Project List (Home) | Lista los proyectos del usuario, FAB para crear, estados loading/empty |
 | Create Project      | Form con nombre, descripción opcional y prompt inicial (con validación)|
 | Project Detail      | Tabs: **Prompt** (chat de creación/iteración), **Preview** (WebView + QR), **Historial** (versiones) |
+| Community Library   | Lista proyectos públicos/compartidos, búsqueda y acceso al detalle público |
+| Public Project      | Muestra atribución, preview, versiones visibles y acción de fork |
 
 ## Datos mock
 
 `MockProjectRepository` mantiene proyectos, versiones y mensajes en `MutableStateFlow`s, simula latencia (~600 ms) y crea una nueva versión por cada prompt enviado. Los flows son reactivos: cualquier prompt nuevo aparece automáticamente en las pestañas de Prompt e Historial sin recargar.
 
-## Limitaciones conocidas (a resolver en Deliveries 2/3)
+## Limitaciones conocidas
 
 - La preview depende de que el backend o v0 devuelva una URL válida para la versión generada.
 - Sin persistencia en disco: los datos se reinician al cerrar la app.
-- Sin autenticación, sin librería pública, sin fork.
+- La biblioteca pública y forks ya existen, pero aún no incluyen moderación, ranking ni perfiles sociales avanzados.
 - Sin manejo avanzado de errores ni reintentos.

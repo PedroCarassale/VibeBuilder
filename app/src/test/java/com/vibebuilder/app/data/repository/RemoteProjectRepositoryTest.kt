@@ -4,6 +4,8 @@ import com.vibebuilder.app.data.remote.ApiProject
 import com.vibebuilder.app.data.remote.ApiProjectPreview
 import com.vibebuilder.app.data.remote.ApiPreviewTarget
 import com.vibebuilder.app.data.remote.ApiProjectVersion
+import com.vibebuilder.app.data.remote.ApiPublicProject
+import com.vibebuilder.app.data.remote.ApiForkResponse
 import com.vibebuilder.app.data.remote.ApiPromptMessage
 import com.vibebuilder.app.data.remote.ApiPromptResponse
 import com.vibebuilder.app.data.remote.ApiRequestException
@@ -63,6 +65,45 @@ class RemoteProjectRepositoryTest {
         api.failDelete = true
         runCatching { repository.deleteProject(PROJECT_ID) }
         assertEquals(before, repository.observeProjects().first())
+    }
+
+    @Test
+    fun updateProjectVisibility_publicaProyectoYRefrescaBiblioteca() = runTest {
+        val repository = RemoteProjectRepository(FakeVibeBuilderApi())
+        repository.observeProjects().first()
+
+        val published = repository.updateProjectVisibility(PROJECT_ID, isPublic = true)
+
+        assertEquals(com.vibebuilder.app.domain.model.ProjectVisibility.PUBLIC, published.visibility)
+        val libraryProject = repository.observeLibraryProjects().first().first()
+        assertEquals(PROJECT_ID, libraryProject.id)
+        assertEquals("Proyecto Persistente", libraryProject.title)
+    }
+
+    @Test
+    fun observeLibraryProject_cargaDetallePublicoConVersiones() = runTest {
+        val repository = RemoteProjectRepository(FakeVibeBuilderApi())
+
+        val detail = repository.observeLibraryProject("public-1").first()
+
+        assertEquals("Plantilla pública", detail?.title)
+        assertEquals("Ada", detail?.ownerName)
+        assertEquals(1, detail?.versions?.size)
+        assertEquals("Prompt público", detail?.versions?.first()?.prompt)
+    }
+
+    @Test
+    fun forkProject_creaProyectoPropioConAtribucion() = runTest {
+        val repository = RemoteProjectRepository(FakeVibeBuilderApi())
+
+        val fork = repository.forkProject("public-1")
+
+        assertEquals("fork-public-1", fork.id)
+        assertEquals("Fork de Plantilla pública", fork.title)
+        assertEquals("public-1", fork.originalProjectId)
+        assertEquals("Plantilla pública", fork.originalProjectTitle)
+        assertEquals("Ada", fork.originalAuthorName)
+        assertEquals("fork-public-1", repository.observeProjects().first().first().id)
     }
 
     @Test
@@ -197,6 +238,35 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
         )
     )
 
+    private val publicProjects = mutableListOf(
+        ApiPublicProject(
+            id = "public-1",
+            title = "Plantilla pública",
+            description = "Lista para fork",
+            ownerName = "Ada",
+            currentVersionNumber = 1,
+            currentPreviewUrl = "https://preview.v0.dev/public-1",
+            forkCount = 4,
+            publishedAt = "2026-01-01T10:00:00.000Z",
+            updatedAt = "2026-01-01T10:00:00.000Z",
+            createdAt = "2026-01-01T09:00:00.000Z",
+            originalProjectId = null,
+            originalProjectTitle = null,
+            originalAuthorName = null,
+            versions = listOf(
+                ApiProjectVersion(
+                    id = "public-v1",
+                    projectId = "public-1",
+                    versionNumber = 1,
+                    promptSnapshot = "Prompt público",
+                    status = "success",
+                    previewUrl = "https://preview.v0.dev/public-1",
+                    createdAt = "2026-01-01T10:00:00.000Z"
+                )
+            )
+        )
+    )
+
     private val versions = mutableMapOf(
         "project-1" to mutableListOf(
             ApiProjectVersion(
@@ -298,6 +368,11 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
 
     override suspend fun getProjects(): List<ApiProject> = projects.toList()
 
+    override suspend fun getLibraryProjects(): List<ApiPublicProject> = publicProjects.toList()
+
+    override suspend fun getLibraryProject(projectId: String): ApiPublicProject =
+        publicProjects.first { it.id == projectId }
+
     override suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion> =
         versions[projectId].orEmpty().toList()
 
@@ -356,11 +431,78 @@ private class FakeVibeBuilderApi : VibeBuilderApi {
         return updated
     }
 
+    override suspend fun updateProjectVisibility(projectId: String, visibility: String): ApiProject {
+        val index = projects.indexOfFirst { it.id == projectId }
+        val updated = projects[index].copy(
+            visibility = visibility,
+            publishedAt = if (visibility == "public") "2026-01-01T12:00:00.000Z" else null,
+            updatedAt = "2026-01-01T12:00:00.000Z"
+        )
+        projects[index] = updated
+        if (visibility == "public") {
+            publicProjects.removeAll { it.id == projectId }
+            publicProjects.add(
+                0,
+                ApiPublicProject(
+                    id = updated.id,
+                    title = updated.title,
+                    description = updated.description,
+                    ownerName = "Tú",
+                    currentVersionNumber = 2,
+                    currentPreviewUrl = null,
+                    forkCount = 0,
+                    publishedAt = updated.publishedAt,
+                    updatedAt = updated.updatedAt,
+                    createdAt = updated.createdAt,
+                    originalProjectId = updated.originalProjectId,
+                    originalProjectTitle = updated.originalProjectTitle,
+                    originalAuthorName = updated.originalAuthorName,
+                    versions = emptyList()
+                )
+            )
+        } else {
+            publicProjects.removeAll { it.id == projectId }
+        }
+        return updated
+    }
+
     override suspend fun deleteProject(projectId: String) {
         if (failDelete) throw IOException("delete failed")
         projects.removeAll { it.id == projectId }
         versions.remove(projectId)
         messages.remove(projectId)
+    }
+
+    override suspend fun forkProject(projectId: String): ApiForkResponse {
+        val source = publicProjects.first { it.id == projectId }
+        val forkedProjectId = "fork-$projectId"
+        projects.add(
+            0,
+            ApiProject(
+                id = forkedProjectId,
+                title = "Fork de ${source.title}",
+                description = source.description,
+                currentVersionId = "fork-v1",
+                currentVersionNumber = source.currentVersionNumber,
+                visibility = "private",
+                originalProjectId = source.id,
+                originalProjectTitle = source.title,
+                originalAuthorName = source.ownerName,
+                forkedAt = "2026-01-01T12:00:00.000Z",
+                createdAt = "2026-01-01T12:00:00.000Z",
+                updatedAt = "2026-01-01T12:00:00.000Z"
+            )
+        )
+        versions[forkedProjectId] = source.versions.map {
+            it.copy(id = "fork-v${it.versionNumber}", projectId = forkedProjectId)
+        }.toMutableList()
+        messages[forkedProjectId] = mutableListOf()
+        return ApiForkResponse(
+            projectId = forkedProjectId,
+            originalProjectId = source.id,
+            originalProjectTitle = source.title,
+            originalAuthorName = source.ownerName
+        )
     }
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse {

@@ -7,6 +7,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.vibebuilder.app.di.ServiceLocator
 import com.vibebuilder.app.domain.model.Project
+import com.vibebuilder.app.domain.model.ProjectVisibility
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
 import com.vibebuilder.app.domain.model.VersionStatus
@@ -102,6 +103,11 @@ data class DeleteProjectState(
     val succeeded: Boolean = false
 )
 
+data class VisibilityActionState(
+    val isSaving: Boolean = false,
+    val errorMessage: String? = null
+)
+
 class ProjectDetailViewModel(
     private val projectId: String,
     private val repository: ProjectRepository
@@ -180,6 +186,9 @@ class ProjectDetailViewModel(
     private val _deleteProjectState = MutableStateFlow(DeleteProjectState())
     val deleteProjectState: StateFlow<DeleteProjectState> = _deleteProjectState.asStateFlow()
 
+    private val _visibilityActionState = MutableStateFlow(VisibilityActionState())
+    val visibilityActionState: StateFlow<VisibilityActionState> = _visibilityActionState.asStateFlow()
+
     fun showEditProject(project: Project) {
         _editProjectState.value = EditProjectState(
             isVisible = true,
@@ -229,6 +238,25 @@ class ProjectDetailViewModel(
 
     fun showDeleteProject() {
         _deleteProjectState.value = DeleteProjectState(isVisible = true)
+    }
+
+    fun toggleProjectVisibility(project: Project) {
+        if (_visibilityActionState.value.isSaving) return
+        val makePublic = project.visibility == ProjectVisibility.PRIVATE
+        _visibilityActionState.value = VisibilityActionState(isSaving = true)
+        viewModelScope.launch {
+            runCatching { repository.updateProjectVisibility(projectId, makePublic) }
+                .onSuccess { _visibilityActionState.value = VisibilityActionState() }
+                .onFailure { error ->
+                    _visibilityActionState.value = VisibilityActionState(
+                        errorMessage = error.message ?: "No se pudo actualizar la visibilidad"
+                    )
+                }
+        }
+    }
+
+    fun clearVisibilityFeedback() {
+        _visibilityActionState.value = VisibilityActionState()
     }
 
     fun dismissDeleteProject() {

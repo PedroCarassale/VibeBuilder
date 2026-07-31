@@ -3,6 +3,7 @@ package com.vibebuilder.app.ui.screens.projectdetail
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
+import com.vibebuilder.app.domain.model.PublicProject
 import com.vibebuilder.app.domain.model.VersionStatus
 import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import com.vibebuilder.app.domain.repository.ProjectRepository
@@ -265,8 +266,14 @@ private class DetailFakeRepository : ProjectRepository {
 
     override fun observeProjects(): Flow<List<Project>> = projects
 
+    override fun observeLibraryProjects(): Flow<List<PublicProject>> =
+        MutableStateFlow(emptyList())
+
     override fun observeProject(projectId: String): Flow<Project?> =
         projects.map { list -> list.firstOrNull { it.id == projectId } }
+
+    override fun observeLibraryProject(projectId: String): Flow<PublicProject?> =
+        MutableStateFlow(null)
 
     override fun observeVersions(projectId: String): Flow<List<ProjectVersion>> =
         versions.map { it[projectId].orEmpty() }
@@ -287,12 +294,29 @@ private class DetailFakeRepository : ProjectRepository {
         return updated
     }
 
+    override suspend fun updateProjectVisibility(projectId: String, isPublic: Boolean): Project {
+        val existing = projects.value.first { it.id == projectId }
+        val updated = existing.copy(
+            visibility = if (isPublic) {
+                com.vibebuilder.app.domain.model.ProjectVisibility.PUBLIC
+            } else {
+                com.vibebuilder.app.domain.model.ProjectVisibility.PRIVATE
+            }
+        )
+        projects.value = projects.value.map { if (it.id == projectId) updated else it }
+        return updated
+    }
+
     override suspend fun deleteProject(projectId: String) {
         deleteCalls += 1
         if (failDelete) throw IOException("No se pudo eliminar")
         projects.value = projects.value.filterNot { it.id == projectId }
         versions.value = versions.value - projectId
         messages.value = messages.value - projectId
+    }
+
+    override suspend fun forkProject(projectId: String): Project {
+        throw NotImplementedError("No requerido para esta prueba")
     }
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion {

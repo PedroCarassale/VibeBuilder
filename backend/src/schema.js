@@ -7,13 +7,20 @@ export const MIGRATION_STATEMENTS = [
       title TEXT NOT NULL,
       description TEXT,
       current_version_id TEXT,
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public', 'shared')),
+      published_at TEXT,
+      original_project_id TEXT,
+      original_author_user_id TEXT,
+      original_author_session_id TEXT,
+      forked_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       deleted_at TEXT,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (original_project_id) REFERENCES projects(id) ON DELETE SET NULL,
+      FOREIGN KEY (original_author_user_id) REFERENCES users(id) ON DELETE SET NULL
     );`,
   `CREATE INDEX IF NOT EXISTS idx_projects_session_id ON projects (session_id);`,
-  `CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects (user_id);`,
   `CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
@@ -70,6 +77,23 @@ export const MIGRATION_STATEMENTS = [
       FOREIGN KEY (version_id) REFERENCES project_versions(id) ON DELETE SET NULL
     );`,
   `CREATE INDEX IF NOT EXISTS idx_prompt_messages_project_id ON prompt_messages (project_id);`,
+  `CREATE TABLE IF NOT EXISTS forks (
+      id TEXT PRIMARY KEY,
+      original_project_id TEXT NOT NULL,
+      forked_project_id TEXT NOT NULL UNIQUE,
+      original_author_user_id TEXT,
+      original_author_session_id TEXT,
+      new_owner_user_id TEXT,
+      new_owner_session_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (original_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (forked_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (original_author_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (new_owner_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );`,
+  `CREATE INDEX IF NOT EXISTS idx_forks_original_project_id ON forks (original_project_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_forks_new_owner_user_id ON forks (new_owner_user_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_forks_new_owner_session_id ON forks (new_owner_session_id);`,
   `CREATE TABLE IF NOT EXISTS idempotency_requests (
       session_id TEXT NOT NULL,
       endpoint TEXT NOT NULL,
@@ -261,6 +285,19 @@ export async function applyMigrations(db) {
   if (!hasUserIdColumn) {
     await db.exec("ALTER TABLE projects ADD COLUMN user_id TEXT;");
   }
+  const projectColumnAdditions = [
+    ["visibility", "ALTER TABLE projects ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private';"],
+    ["published_at", "ALTER TABLE projects ADD COLUMN published_at TEXT;"],
+    ["original_project_id", "ALTER TABLE projects ADD COLUMN original_project_id TEXT;"],
+    ["original_author_user_id", "ALTER TABLE projects ADD COLUMN original_author_user_id TEXT;"],
+    ["original_author_session_id", "ALTER TABLE projects ADD COLUMN original_author_session_id TEXT;"],
+    ["forked_at", "ALTER TABLE projects ADD COLUMN forked_at TEXT;"]
+  ];
+  for (const [columnName, sql] of projectColumnAdditions) {
+    if (!projectColumns.some((column) => column.name === columnName)) {
+      await db.exec(sql);
+    }
+  }
 
   const userColumns = await db.prepare("PRAGMA table_info(users);").all();
   const hasPasswordHashColumn = userColumns.some((column) => column.name === "password_hash");
@@ -273,6 +310,30 @@ export async function applyMigrations(db) {
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_active_user_updated
     ON projects (user_id, updated_at DESC) WHERE deleted_at IS NULL AND user_id IS NOT NULL;`);
   await db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_user_id ON projects (user_id);`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_public_updated
+    ON projects (updated_at DESC) WHERE deleted_at IS NULL AND visibility IN ('public', 'shared');`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_projects_original_project_id
+    ON projects (original_project_id);`);
+  await db.exec(`CREATE TABLE IF NOT EXISTS forks (
+      id TEXT PRIMARY KEY,
+      original_project_id TEXT NOT NULL,
+      forked_project_id TEXT NOT NULL UNIQUE,
+      original_author_user_id TEXT,
+      original_author_session_id TEXT,
+      new_owner_user_id TEXT,
+      new_owner_session_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (original_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (forked_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (original_author_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (new_owner_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_forks_original_project_id
+    ON forks (original_project_id);`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_forks_new_owner_user_id
+    ON forks (new_owner_user_id);`);
+  await db.exec(`CREATE INDEX IF NOT EXISTS idx_forks_new_owner_session_id
+    ON forks (new_owner_session_id);`);
   await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (email);`);
   await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_project_versions_project_version_unique
     ON project_versions (project_id, version_number);`);

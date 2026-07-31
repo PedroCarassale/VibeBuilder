@@ -16,8 +16,39 @@ data class ApiProject(
     val title: String,
     val description: String?,
     val currentVersionId: String?,
+    val currentVersionNumber: Int? = null,
+    val visibility: String = "private",
+    val publishedAt: String? = null,
+    val originalProjectId: String? = null,
+    val originalProjectTitle: String? = null,
+    val originalAuthorName: String? = null,
+    val forkedAt: String? = null,
     val createdAt: String,
     val updatedAt: String
+)
+
+data class ApiPublicProject(
+    val id: String,
+    val title: String,
+    val description: String?,
+    val ownerName: String,
+    val currentVersionNumber: Int?,
+    val currentPreviewUrl: String?,
+    val forkCount: Int,
+    val publishedAt: String?,
+    val updatedAt: String,
+    val createdAt: String,
+    val originalProjectId: String?,
+    val originalProjectTitle: String?,
+    val originalAuthorName: String?,
+    val versions: List<ApiProjectVersion> = emptyList()
+)
+
+data class ApiForkResponse(
+    val projectId: String,
+    val originalProjectId: String?,
+    val originalProjectTitle: String?,
+    val originalAuthorName: String?
 )
 
 data class ApiPromptResponse(
@@ -100,6 +131,8 @@ interface VibeBuilderApi {
     suspend fun logout()
 
     suspend fun getProjects(): List<ApiProject>
+    suspend fun getLibraryProjects(): List<ApiPublicProject>
+    suspend fun getLibraryProject(projectId: String): ApiPublicProject
     suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion>
     suspend fun getProjectPreview(
         projectId: String,
@@ -109,7 +142,9 @@ interface VibeBuilderApi {
     suspend fun getProjectMessages(projectId: String): List<ApiPromptMessage>
     suspend fun createProject(title: String, description: String): String
     suspend fun updateProject(projectId: String, title: String, description: String): ApiProject
+    suspend fun updateProjectVisibility(projectId: String, visibility: String): ApiProject
     suspend fun deleteProject(projectId: String)
+    suspend fun forkProject(projectId: String): ApiForkResponse
     suspend fun sendPrompt(projectId: String, prompt: String): ApiPromptResponse
     suspend fun regenerateVersion(
         projectId: String,
@@ -196,12 +231,34 @@ class HttpVibeBuilderApi(
                         title = item.getString("title"),
                         description = item.optStringOrNull("description"),
                         currentVersionId = item.optStringOrNull("currentVersionId"),
+                        currentVersionNumber = item.optIntOrNull("currentVersionNumber"),
+                        visibility = item.optString("visibility", "private"),
+                        publishedAt = item.optStringOrNull("publishedAt"),
+                        originalProjectId = item.optStringOrNull("originalProjectId"),
+                        originalProjectTitle = item.optStringOrNull("originalProjectTitle"),
+                        originalAuthorName = item.optStringOrNull("originalAuthorName"),
+                        forkedAt = item.optStringOrNull("forkedAt"),
                         createdAt = item.getString("createdAt"),
                         updatedAt = item.getString("updatedAt")
                     )
                 )
             }
         }
+    }
+
+    override suspend fun getLibraryProjects(): List<ApiPublicProject> = withContext(Dispatchers.IO) {
+        val response = request(method = "GET", path = "/library/projects")
+        val jsonArray = JSONArray(response.body.ifBlank { "[]" })
+        buildList {
+            for (index in 0 until jsonArray.length()) {
+                add(jsonArray.getJSONObject(index).toApiPublicProject())
+            }
+        }
+    }
+
+    override suspend fun getLibraryProject(projectId: String): ApiPublicProject = withContext(Dispatchers.IO) {
+        val response = request(method = "GET", path = "/library/projects/$projectId")
+        JSONObject(response.body).toApiPublicProject()
     }
 
     override suspend fun createProject(title: String, description: String): String = withContext(Dispatchers.IO) {
@@ -232,9 +289,33 @@ class HttpVibeBuilderApi(
         JSONObject(response.body).toApiProject()
     }
 
+    override suspend fun updateProjectVisibility(projectId: String, visibility: String): ApiProject = withContext(Dispatchers.IO) {
+        val response = request(
+            method = "PATCH",
+            path = "/projects/$projectId",
+            body = JSONObject().put("visibility", visibility).toString()
+        )
+        JSONObject(response.body).toApiProject()
+    }
+
     override suspend fun deleteProject(projectId: String) = withContext(Dispatchers.IO) {
         request(method = "DELETE", path = "/projects/$projectId")
         Unit
+    }
+
+    override suspend fun forkProject(projectId: String): ApiForkResponse = withContext(Dispatchers.IO) {
+        val response = request(
+            method = "POST",
+            path = "/projects/$projectId/fork",
+            body = "{}"
+        )
+        val payload = JSONObject(response.body)
+        ApiForkResponse(
+            projectId = payload.getString("projectId"),
+            originalProjectId = payload.optStringOrNull("originalProjectId"),
+            originalProjectTitle = payload.optStringOrNull("originalProjectTitle"),
+            originalAuthorName = payload.optStringOrNull("originalAuthorName")
+        )
     }
 
     override suspend fun getProjectVersions(projectId: String): List<ApiProjectVersion> = withContext(Dispatchers.IO) {
@@ -246,35 +327,7 @@ class HttpVibeBuilderApi(
         val jsonArray = JSONArray(body)
         buildList {
             for (index in 0 until jsonArray.length()) {
-                val item = jsonArray.getJSONObject(index)
-                val artifactObject = item.optJSONObject("artifact")
-                add(
-                    ApiProjectVersion(
-                        id = item.optStringOrNull("id"),
-                        projectId = item.optStringOrNull("projectId"),
-                        versionNumber = item.getInt("versionNumber"),
-                        promptSnapshot = item.optStringOrNull("promptSnapshot")
-                            ?: item.optStringOrNull("prompt")
-                            ?: "",
-                        status = item.getString("status"),
-                        previewUrl = item.optStringOrNull("previewUrl"),
-                        createdAt = item.getString("createdAt"),
-                        sourceVersionId = item.optStringOrNull("sourceVersionId"),
-                        attemptNumber = item.optIntOrNull("attemptNumber") ?: 1,
-                        failureCode = item.optStringOrNull("failureCode"),
-                        startedAt = item.optStringOrNull("startedAt"),
-                        completedAt = item.optStringOrNull("completedAt"),
-                        artifact = artifactObject?.let { artifact ->
-                            ApiVersionArtifact(
-                                framework = artifact.getString("framework"),
-                                fileCount = artifact.getInt("fileCount"),
-                                totalBytes = artifact.getLong("totalBytes"),
-                                validationStatus = artifact.getString("validationStatus"),
-                                hasExport = artifact.optBoolean("hasExport", false)
-                            )
-                        }
-                    )
-                )
+                add(jsonArray.getJSONObject(index).toApiProjectVersion())
             }
         }
     }
@@ -515,9 +568,72 @@ private fun JSONObject.toApiProject() = ApiProject(
     title = getString("title"),
     description = optStringOrNull("description"),
     currentVersionId = optStringOrNull("currentVersionId"),
+    currentVersionNumber = optIntOrNull("currentVersionNumber"),
+    visibility = optString("visibility", "private"),
+    publishedAt = optStringOrNull("publishedAt"),
+    originalProjectId = optStringOrNull("originalProjectId"),
+    originalProjectTitle = optStringOrNull("originalProjectTitle"),
+    originalAuthorName = optStringOrNull("originalAuthorName"),
+    forkedAt = optStringOrNull("forkedAt"),
     createdAt = getString("createdAt"),
     updatedAt = getString("updatedAt")
 )
+
+private fun JSONObject.toApiPublicProject(): ApiPublicProject {
+    val versionArray = optJSONArray("versions")
+    val parsedVersions = buildList {
+        if (versionArray != null) {
+            for (index in 0 until versionArray.length()) {
+                add(versionArray.getJSONObject(index).toApiProjectVersion())
+            }
+        }
+    }
+    return ApiPublicProject(
+        id = getString("id"),
+        title = getString("title"),
+        description = optStringOrNull("description"),
+        ownerName = optStringOrNull("ownerName") ?: "Invitado",
+        currentVersionNumber = optIntOrNull("currentVersionNumber"),
+        currentPreviewUrl = optStringOrNull("currentPreviewUrl"),
+        forkCount = optIntOrNull("forkCount") ?: 0,
+        publishedAt = optStringOrNull("publishedAt"),
+        updatedAt = getString("updatedAt"),
+        createdAt = getString("createdAt"),
+        originalProjectId = optStringOrNull("originalProjectId"),
+        originalProjectTitle = optStringOrNull("originalProjectTitle"),
+        originalAuthorName = optStringOrNull("originalAuthorName"),
+        versions = parsedVersions
+    )
+}
+
+private fun JSONObject.toApiProjectVersion(): ApiProjectVersion {
+    val artifactObject = optJSONObject("artifact")
+    return ApiProjectVersion(
+        id = optStringOrNull("id"),
+        projectId = optStringOrNull("projectId"),
+        versionNumber = getInt("versionNumber"),
+        promptSnapshot = optStringOrNull("promptSnapshot")
+            ?: optStringOrNull("prompt")
+            ?: "",
+        status = getString("status"),
+        previewUrl = optStringOrNull("previewUrl"),
+        createdAt = getString("createdAt"),
+        sourceVersionId = optStringOrNull("sourceVersionId"),
+        attemptNumber = optIntOrNull("attemptNumber") ?: 1,
+        failureCode = optStringOrNull("failureCode"),
+        startedAt = optStringOrNull("startedAt"),
+        completedAt = optStringOrNull("completedAt"),
+        artifact = artifactObject?.let { artifact ->
+            ApiVersionArtifact(
+                framework = artifact.getString("framework"),
+                fileCount = artifact.getInt("fileCount"),
+                totalBytes = artifact.getLong("totalBytes"),
+                validationStatus = artifact.getString("validationStatus"),
+                hasExport = artifact.optBoolean("hasExport", false)
+            )
+        }
+    )
+}
 
 private fun JSONObject.toAuthSession(): AuthSession = AuthSession(
     token = getString("token"),

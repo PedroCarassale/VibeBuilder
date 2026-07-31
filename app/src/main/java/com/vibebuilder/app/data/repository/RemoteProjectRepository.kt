@@ -8,8 +8,10 @@ import com.vibebuilder.app.data.remote.ApiPromptResponse
 import com.vibebuilder.app.data.remote.ApiRequestException
 import com.vibebuilder.app.data.remote.VibeBuilderApi
 import com.vibebuilder.app.domain.model.Project
+import com.vibebuilder.app.domain.model.ProjectVisibility
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
+import com.vibebuilder.app.domain.model.PublicProject
 import com.vibebuilder.app.domain.model.VersionStatus
 import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
 import com.vibebuilder.app.domain.repository.PreviewUrlResolution
@@ -38,6 +40,7 @@ class RemoteProjectRepository(
 
     private val mutex = Mutex()
     private val projectsState = MutableStateFlow<List<Project>>(emptyList())
+    private val libraryProjectsState = MutableStateFlow<List<PublicProject>>(emptyList())
     private val versionsState = MutableStateFlow<Map<String, List<ProjectVersion>>>(emptyMap())
     private val messagesState = MutableStateFlow<Map<String, List<PromptMessage>>>(emptyMap())
 
@@ -45,9 +48,18 @@ class RemoteProjectRepository(
         .onStart { refreshFromBackend() }
         .map { list -> list.sortedByDescending { project -> project.updatedAt } }
 
+    override fun observeLibraryProjects(): Flow<List<PublicProject>> = libraryProjectsState.asStateFlow()
+        .onStart { refreshLibraryFromBackend() }
+        .map { list -> list.sortedByDescending { project -> project.publishedAt ?: project.updatedAt } }
+
     override fun observeProject(projectId: String): Flow<Project?> =
         projectsState.asStateFlow()
             .onStart { refreshFromBackend() }
+            .map { list -> list.firstOrNull { it.id == projectId } }
+
+    override fun observeLibraryProject(projectId: String): Flow<PublicProject?> =
+        libraryProjectsState.asStateFlow()
+            .onStart { refreshLibraryProjectFromBackend(projectId) }
             .map { list -> list.firstOrNull { it.id == projectId } }
 
     override fun observeVersions(projectId: String): Flow<List<ProjectVersion>> =
@@ -95,11 +107,42 @@ class RemoteProjectRepository(
         updated
     }
 
+    override suspend fun updateProjectVisibility(projectId: String, isPublic: Boolean): Project = mutex.withLock {
+        val existing = projectsState.value.firstOrNull { it.id == projectId }
+            ?: error("Project $projectId not found")
+        val visibility = if (isPublic) "public" else "private"
+        val updated = api.updateProjectVisibility(projectId, visibility)
+            .toDomain(existing.currentVersionNumber)
+        upsertProject(updated)
+        refreshLibraryFromBackend()
+        updated
+    }
+
     override suspend fun deleteProject(projectId: String) = mutex.withLock {
         api.deleteProject(projectId)
         projectsState.value = projectsState.value.filterNot { it.id == projectId }
         versionsState.value = versionsState.value - projectId
         messagesState.value = messagesState.value - projectId
+        libraryProjectsState.value = libraryProjectsState.value.filterNot { it.id == projectId }
+    }
+
+    override suspend fun forkProject(projectId: String): Project = mutex.withLock {
+        val fork = api.forkProject(projectId)
+        refreshFromBackend()
+        refreshLibraryFromBackend()
+        refreshProjectDetailFromBackend(fork.projectId)
+        projectsState.value.firstOrNull { it.id == fork.projectId }
+            ?: Project(
+                id = fork.projectId,
+                title = "Fork de ${fork.originalProjectTitle.orEmpty()}".trim(),
+                description = "",
+                createdAt = Clock.System.now(),
+                updatedAt = Clock.System.now(),
+                currentVersionNumber = 0,
+                originalProjectId = fork.originalProjectId,
+                originalProjectTitle = fork.originalProjectTitle,
+                originalAuthorName = fork.originalAuthorName
+            )
     }
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion =
@@ -249,6 +292,18 @@ class RemoteProjectRepository(
         projectsState.value = remoteProjects
     }
 
+    private suspend fun refreshLibraryFromBackend() {
+        libraryProjectsState.value = api.getLibraryProjects().map { it.toDomain() }
+    }
+
+    private suspend fun refreshLibraryProjectFromBackend(projectId: String) {
+        val remote = api.getLibraryProject(projectId).toDomain()
+        libraryProjectsState.value = buildList {
+            add(remote)
+            addAll(libraryProjectsState.value.filterNot { it.id == projectId })
+        }
+    }
+
     private suspend fun refreshProjectDetailFromBackend(projectId: String) {
         val remoteVersions = api.getProjectVersions(projectId).map { it.toDomain() }
         val remoteMessages = api.getProjectMessages(projectId).map { it.toDomain() }
@@ -292,7 +347,30 @@ class RemoteProjectRepository(
         description = description.orEmpty(),
         createdAt = parseInstant(createdAt),
         updatedAt = parseInstant(updatedAt),
-        currentVersionNumber = currentVersionNumber ?: if (currentVersionId == null) 0 else 1
+        currentVersionNumber = currentVersionNumber
+            ?: this.currentVersionNumber
+            ?: if (currentVersionId == null) 0 else 1,
+        visibility = visibility.toProjectVisibility(),
+        originalProjectId = originalProjectId,
+        originalProjectTitle = originalProjectTitle,
+        originalAuthorName = originalAuthorName,
+        forkedAt = forkedAt?.let(::parseInstant)
+    )
+
+    private fun com.vibebuilder.app.data.remote.ApiPublicProject.toDomain(): PublicProject = PublicProject(
+        id = id,
+        title = title,
+        description = description.orEmpty(),
+        ownerName = ownerName,
+        currentVersionNumber = currentVersionNumber ?: 0,
+        currentPreviewUrl = currentPreviewUrl,
+        forkCount = forkCount,
+        publishedAt = publishedAt?.let(::parseInstant),
+        updatedAt = parseInstant(updatedAt),
+        originalProjectId = originalProjectId,
+        originalProjectTitle = originalProjectTitle,
+        originalAuthorName = originalAuthorName,
+        versions = versions.map { it.toDomain() }
     )
 
     private fun parseInstant(value: String): Instant =
@@ -312,6 +390,12 @@ class RemoteProjectRepository(
         "failed" -> VersionStatus.FAILED
         "cancelled" -> VersionStatus.CANCELLED
         else -> throw IOException("Estado de generación inválido: $this")
+    }
+
+    private fun String.toProjectVisibility(): ProjectVisibility = when (lowercase()) {
+        "public" -> ProjectVisibility.PUBLIC
+        "shared" -> ProjectVisibility.SHARED
+        else -> ProjectVisibility.PRIVATE
     }
 
     private fun ApiProjectVersion.toDomain(): ProjectVersion = ProjectVersion(

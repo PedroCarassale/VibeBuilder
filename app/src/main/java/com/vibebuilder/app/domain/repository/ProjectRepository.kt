@@ -3,6 +3,7 @@ package com.vibebuilder.app.domain.repository
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
+import com.vibebuilder.app.domain.model.PublicProject
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -16,7 +17,11 @@ interface ProjectRepository {
 
     fun observeProjects(): Flow<List<Project>>
 
+    fun observeLibraryProjects(): Flow<List<PublicProject>>
+
     fun observeProject(projectId: String): Flow<Project?>
+
+    fun observeLibraryProject(projectId: String): Flow<PublicProject?>
 
     fun observeVersions(projectId: String): Flow<List<ProjectVersion>>
 
@@ -29,7 +34,11 @@ interface ProjectRepository {
 
     suspend fun updateProject(projectId: String, title: String, description: String): Project
 
+    suspend fun updateProjectVisibility(projectId: String, isPublic: Boolean): Project
+
     suspend fun deleteProject(projectId: String)
+
+    suspend fun forkProject(projectId: String): Project
 
     suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion
 

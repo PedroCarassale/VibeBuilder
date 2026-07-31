@@ -3,6 +3,7 @@ package com.vibebuilder.app.ui.screens.projectlist
 import com.vibebuilder.app.domain.model.Project
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
+import com.vibebuilder.app.domain.model.PublicProject
 import com.vibebuilder.app.domain.repository.PreviewUrlResolution
 import com.vibebuilder.app.domain.repository.ProjectRepository
 import kotlinx.coroutines.Dispatchers
@@ -144,7 +145,13 @@ private class RetryableRepository(private val failFirst: Boolean = true) : Proje
         )
     }
 
+    override fun observeLibraryProjects(): Flow<List<PublicProject>> =
+        flow { emit(emptyList()) }
+
     override fun observeProject(projectId: String): Flow<Project?> =
+        throw NotImplementedError("No requerido para esta prueba")
+
+    override fun observeLibraryProject(projectId: String): Flow<PublicProject?> =
         throw NotImplementedError("No requerido para esta prueba")
 
     override fun observeVersions(projectId: String): Flow<List<ProjectVersion>> =
@@ -159,7 +166,13 @@ private class RetryableRepository(private val failFirst: Boolean = true) : Proje
     override suspend fun updateProject(projectId: String, title: String, description: String): Project =
         throw NotImplementedError("No requerido para esta prueba")
 
+    override suspend fun updateProjectVisibility(projectId: String, isPublic: Boolean): Project =
+        throw NotImplementedError("No requerido para esta prueba")
+
     override suspend fun deleteProject(projectId: String) =
+        throw NotImplementedError("No requerido para esta prueba")
+
+    override suspend fun forkProject(projectId: String): Project =
         throw NotImplementedError("No requerido para esta prueba")
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion =

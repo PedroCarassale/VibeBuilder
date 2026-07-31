@@ -48,7 +48,11 @@ const INVALID_DESCRIPTION_ERROR = {
 };
 const INVALID_PROJECT_UPDATE_ERROR = {
   code: "INVALID_PROJECT_UPDATE",
-  message: "Body must contain only title and/or description."
+  message: "Body must contain only title, description and/or visibility."
+};
+const INVALID_VISIBILITY_ERROR = {
+  code: "INVALID_VISIBILITY",
+  message: "visibility must be one of private, public or shared."
 };
 const INVALID_JSON_ERROR = {
   code: "INVALID_JSON",
@@ -61,6 +65,10 @@ const INVALID_PROMPT_ERROR = {
 const PROJECT_NOT_FOUND_ERROR = {
   code: "PROJECT_NOT_FOUND",
   message: "Project not found."
+};
+const PUBLIC_PROJECT_NOT_FOUND_ERROR = {
+  code: "PUBLIC_PROJECT_NOT_FOUND",
+  message: "Public project not found."
 };
 const VERSION_NOT_FOUND_ERROR = {
   code: "VERSION_NOT_FOUND",
@@ -406,12 +414,20 @@ function normalizeDescription(value) {
   return normalized.length > 0 ? normalized : null;
 }
 
+function normalizeVisibility(value) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized === "private" || normalized === "public" || normalized === "shared"
+    ? normalized
+    : null;
+}
+
 function validateProjectFields(body, { partial = false } = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { error: partial ? INVALID_PROJECT_UPDATE_ERROR : INVALID_TITLE_ERROR };
   }
 
-  const supportedFields = new Set(["title", "description"]);
+  const supportedFields = new Set(["title", "description", "visibility"]);
   const fields = Object.keys(body);
   if (partial && (fields.length === 0 || fields.some((field) => !supportedFields.has(field)))) {
     return { error: INVALID_PROJECT_UPDATE_ERROR };
@@ -419,6 +435,7 @@ function validateProjectFields(body, { partial = false } = {}) {
 
   const hasTitle = Object.hasOwn(body, "title");
   const hasDescription = Object.hasOwn(body, "description");
+  const hasVisibility = Object.hasOwn(body, "visibility");
   if ((!partial || hasTitle) && typeof body.title !== "string") {
     return { error: INVALID_TITLE_ERROR };
   }
@@ -432,13 +449,19 @@ function validateProjectFields(body, { partial = false } = {}) {
       (typeof body.description !== "string" || body.description.trim().length > 500)) {
     return { error: INVALID_DESCRIPTION_ERROR };
   }
+  const visibility = hasVisibility ? normalizeVisibility(body.visibility) : undefined;
+  if (hasVisibility && !visibility) {
+    return { error: INVALID_VISIBILITY_ERROR };
+  }
 
   return {
     value: {
       hasTitle,
       title,
       hasDescription,
-      description: hasDescription ? normalizeDescription(body.description) : undefined
+      description: hasDescription ? normalizeDescription(body.description) : undefined,
+      hasVisibility,
+      visibility
     }
   };
 }
@@ -449,6 +472,13 @@ function mapProject(row) {
     title: row.title,
     description: row.description,
     currentVersionId: row.current_version_id,
+    currentVersionNumber: row.current_version_number ?? null,
+    visibility: row.visibility ?? "private",
+    publishedAt: row.published_at ?? null,
+    originalProjectId: row.original_project_id ?? null,
+    originalProjectTitle: row.original_project_title ?? null,
+    originalAuthorName: row.original_author_name ?? null,
+    forkedAt: row.forked_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -618,16 +648,26 @@ function createProjectHandler(db, idempotencyStore, telemetryStore, authService)
 function createListProjectsHandler(db, authService) {
   const listProjectsStatement = db.prepare(`
     SELECT
-      id,
-      title,
-      description,
-      current_version_id,
-      created_at,
-      updated_at
-    FROM projects
-    WHERE deleted_at IS NULL
-      AND ${actorProjectWhere()}
-    ORDER BY updated_at DESC;
+      p.id,
+      p.title,
+      p.description,
+      p.current_version_id,
+      p.visibility,
+      p.published_at,
+      p.original_project_id,
+      p.forked_at,
+      op.title AS original_project_title,
+      COALESCE(ou.name, ou.email) AS original_author_name,
+      cv.version_number AS current_version_number,
+      p.created_at,
+      p.updated_at
+    FROM projects p
+    LEFT JOIN projects op ON op.id = p.original_project_id
+    LEFT JOIN users ou ON ou.id = p.original_author_user_id
+    LEFT JOIN project_versions cv ON cv.id = p.current_version_id
+    WHERE p.deleted_at IS NULL
+      AND ${actorProjectWhere("p")}
+    ORDER BY p.updated_at DESC;
   `);
 
   return async function handleListProjects(request, response) {
@@ -647,10 +687,29 @@ function createUpdateProjectHandler(db, authService) {
     SET
       title = CASE WHEN ? = 1 THEN ? ELSE title END,
       description = CASE WHEN ? = 1 THEN ? ELSE description END,
+      visibility = CASE WHEN ? = 1 THEN ? ELSE visibility END,
+      published_at = CASE
+        WHEN ? = 1 AND ? IN ('public', 'shared') AND published_at IS NULL THEN ?
+        WHEN ? = 1 AND ? = 'private' THEN NULL
+        ELSE published_at
+      END,
       updated_at = ?
     WHERE id = ? AND deleted_at IS NULL
       AND ${actorProjectWhere()}
-    RETURNING id, title, description, current_version_id, created_at, updated_at;
+    RETURNING
+      id,
+      title,
+      description,
+      current_version_id,
+      visibility,
+      published_at,
+      original_project_id,
+      forked_at,
+      NULL AS original_project_title,
+      NULL AS original_author_name,
+      NULL AS current_version_number,
+      created_at,
+      updated_at;
   `);
 
   return async function handleUpdateProject(request, response, projectId) {
@@ -672,12 +731,20 @@ function createUpdateProjectHandler(db, authService) {
     }
 
     const fields = validation.value;
+    const now = new Date().toISOString();
     const row = await updateProjectStatement.get(
       fields.hasTitle ? 1 : 0,
       fields.title ?? null,
       fields.hasDescription ? 1 : 0,
       fields.description ?? null,
-      new Date().toISOString(),
+      fields.hasVisibility ? 1 : 0,
+      fields.visibility ?? null,
+      fields.hasVisibility ? 1 : 0,
+      fields.visibility ?? null,
+      now,
+      fields.hasVisibility ? 1 : 0,
+      fields.visibility ?? null,
+      now,
       projectId,
       ...actorProjectArgs(actor)
     );
@@ -708,6 +775,378 @@ function createDeleteProjectHandler(db, authService) {
       return;
     }
     sendJson(response, 204);
+  };
+}
+
+function createLibraryHandlers(db, idempotencyStore, authService) {
+  const publicProjectSelect = `
+    SELECT
+      p.id,
+      p.session_id,
+      p.user_id,
+      p.title,
+      p.description,
+      p.current_version_id,
+      p.visibility,
+      p.published_at,
+      p.original_project_id,
+      p.original_author_user_id,
+      p.original_author_session_id,
+      p.forked_at,
+      p.created_at,
+      p.updated_at,
+      owner.name AS owner_name,
+      owner.email AS owner_email,
+      op.title AS original_project_title,
+      ou.name AS original_author_name,
+      ou.email AS original_author_email,
+      cv.version_number AS current_version_number,
+      cv.preview_url AS current_preview_url,
+      cv.provider_meta AS current_provider_meta,
+      COALESCE(fork_counts.total, 0) AS fork_count
+    FROM projects p
+    LEFT JOIN users owner ON owner.id = p.user_id
+    LEFT JOIN projects op ON op.id = p.original_project_id
+    LEFT JOIN users ou ON ou.id = p.original_author_user_id
+    LEFT JOIN project_versions cv ON cv.id = p.current_version_id
+    LEFT JOIN (
+      SELECT original_project_id, COUNT(*) AS total
+      FROM forks
+      GROUP BY original_project_id
+    ) fork_counts ON fork_counts.original_project_id = p.id
+  `;
+  const listPublicProjectsStatement = db.prepare(`
+    ${publicProjectSelect}
+    WHERE p.deleted_at IS NULL
+      AND p.visibility IN ('public', 'shared')
+    ORDER BY COALESCE(p.published_at, p.updated_at) DESC, p.id DESC
+    LIMIT 100;
+  `);
+  const findPublicProjectStatement = db.prepare(`
+    ${publicProjectSelect}
+    WHERE p.id = ?
+      AND p.deleted_at IS NULL
+      AND p.visibility IN ('public', 'shared');
+  `);
+  const listPublicVersionsStatement = db.prepare(`
+    SELECT
+      id,
+      project_id,
+      version_number,
+      prompt_snapshot,
+      status,
+      preview_url,
+      source_version_id,
+      attempt_number,
+      failure_code,
+      started_at,
+      completed_at,
+      created_at
+    FROM project_versions
+    WHERE project_id = ?
+    ORDER BY version_number DESC, created_at DESC, id DESC
+    LIMIT 10;
+  `);
+  const listAllVersionsStatement = db.prepare(`
+    SELECT
+      id,
+      version_number,
+      prompt_snapshot,
+      status,
+      preview_url,
+      provider_meta,
+      source_version_id,
+      attempt_number,
+      failure_code,
+      started_at,
+      completed_at,
+      created_at
+    FROM project_versions
+    WHERE project_id = ?
+    ORDER BY version_number ASC, created_at ASC, id ASC;
+  `);
+  const listAllMessagesStatement = db.prepare(`
+    SELECT id, version_id, role, content, created_at
+    FROM prompt_messages
+    WHERE project_id = ?
+    ORDER BY created_at ASC, id ASC;
+  `);
+  const insertProjectSql = `
+    INSERT INTO projects (
+      id,
+      session_id,
+      user_id,
+      title,
+      description,
+      current_version_id,
+      visibility,
+      published_at,
+      original_project_id,
+      original_author_user_id,
+      original_author_session_id,
+      forked_at,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'private', NULL, ?, ?, ?, ?, ?, ?);
+  `;
+  const updateForkCurrentVersionSql = `
+    UPDATE projects
+    SET current_version_id = ?, updated_at = ?
+    WHERE id = ?;
+  `;
+  const insertVersionSql = `
+    INSERT INTO project_versions (
+      id,
+      project_id,
+      version_number,
+      prompt_snapshot,
+      status,
+      preview_url,
+      provider_meta,
+      source_version_id,
+      attempt_number,
+      failure_code,
+      started_at,
+      completed_at,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+  `;
+  const insertMessageSql = `
+    INSERT INTO prompt_messages (
+      id,
+      project_id,
+      version_id,
+      role,
+      content,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?);
+  `;
+  const insertForkSql = `
+    INSERT INTO forks (
+      id,
+      original_project_id,
+      forked_project_id,
+      original_author_user_id,
+      original_author_session_id,
+      new_owner_user_id,
+      new_owner_session_id,
+      created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+  `;
+
+  async function handleListLibraryProjects(request, response) {
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
+
+    const rows = await listPublicProjectsStatement.all();
+    sendJson(response, 200, rows.map((row) => mapPublicProject(row)));
+  }
+
+  async function handleGetLibraryProject(request, response, projectId) {
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
+
+    const row = await findPublicProjectStatement.get(projectId);
+    if (!row) {
+      sendJson(response, 404, { error: PUBLIC_PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+
+    const versions = (await listPublicVersionsStatement.all(projectId)).map((version) => ({
+      id: version.id,
+      projectId: version.project_id,
+      versionNumber: version.version_number,
+      promptSnapshot: version.prompt_snapshot,
+      status: version.status,
+      previewUrl: version.preview_url,
+      sourceVersionId: version.source_version_id,
+      attemptNumber: version.attempt_number,
+      failureCode: version.failure_code,
+      startedAt: version.started_at,
+      completedAt: version.completed_at,
+      createdAt: version.created_at
+    }));
+
+    sendJson(response, 200, mapPublicProject(row, { versions }));
+  }
+
+  async function handleForkProject(request, response, projectId, endpoint) {
+    const actor = await getRequestActor(request, response, authService);
+    if (!actor) return;
+    const idempotencyKey = getValidIdempotencyKey(request, response);
+    if (!idempotencyKey) return;
+
+    let body;
+    try {
+      body = await parseJsonBody(request);
+    } catch {
+      sendJson(response, 400, { error: INVALID_JSON_ERROR });
+      return;
+    }
+
+    let idempotencyRecord;
+    try {
+      idempotencyRecord = await idempotencyStore.claim({
+        sessionId: actor.sessionId,
+        endpoint,
+        idempotencyKey,
+        payloadHash: hashPayload(body)
+      });
+    } catch {
+      sendJson(response, 500, {
+        error: {
+          code: "INTERNAL_ERROR",
+          message: "Could not process idempotency key."
+        }
+      });
+      return;
+    }
+
+    if (idempotencyRecord.type === "conflict") {
+      sendJson(response, 409, { error: IDEMPOTENCY_KEY_CONFLICT_ERROR });
+      return;
+    }
+    if (idempotencyRecord.type === "replay") {
+      sendJson(response, idempotencyRecord.statusCode, idempotencyRecord.body);
+      return;
+    }
+    if (idempotencyRecord.type === "in_progress") {
+      sendJson(response, 409, { error: IDEMPOTENCY_KEY_IN_PROGRESS_ERROR });
+      return;
+    }
+    if (idempotencyRecord.type === "error") {
+      sendJson(response, 500, {
+        error: {
+          code: "INTERNAL_ERROR",
+          message: "Could not replay idempotent response."
+        }
+      });
+      return;
+    }
+
+    const sendIdempotentResponse = async (statusCode, payload) => {
+      await idempotencyStore.saveResponse({
+        sessionId: actor.sessionId,
+        endpoint,
+        idempotencyKey,
+        statusCode,
+        body: payload
+      });
+      sendJson(response, statusCode, payload);
+    };
+
+    const sourceProject = await findPublicProjectStatement.get(projectId);
+    if (!sourceProject) {
+      await sendIdempotentResponse(404, { error: PUBLIC_PROJECT_NOT_FOUND_ERROR });
+      return;
+    }
+
+    const requestedTitle = typeof body?.title === "string" ? body.title.trim() : "";
+    if (Object.hasOwn(body ?? {}, "title") && (requestedTitle.length < 1 || requestedTitle.length > 100)) {
+      await sendIdempotentResponse(400, { error: INVALID_TITLE_ERROR });
+      return;
+    }
+    const forkTitle = requestedTitle || `Fork de ${sourceProject.title}`.slice(0, 100);
+    const now = new Date().toISOString();
+    const forkedProjectId = randomUUID();
+    const versionIdMap = new Map();
+    const sourceVersions = await listAllVersionsStatement.all(sourceProject.id);
+    const sourceMessages = await listAllMessagesStatement.all(sourceProject.id);
+
+    try {
+      await db.transaction(async (tx) => {
+        const insertProject = tx.prepare(insertProjectSql);
+        const insertVersion = tx.prepare(insertVersionSql);
+        const updateForkCurrentVersion = tx.prepare(updateForkCurrentVersionSql);
+        const insertMessage = tx.prepare(insertMessageSql);
+        const insertFork = tx.prepare(insertForkSql);
+
+        await insertProject.run(
+          forkedProjectId,
+          actor.sessionId,
+          actor.userId,
+          forkTitle,
+          sourceProject.description,
+          null,
+          sourceProject.id,
+          sourceProject.user_id,
+          sourceProject.session_id,
+          now,
+          now,
+          now
+        );
+
+        for (const version of sourceVersions) {
+          const copiedVersionId = randomUUID();
+          versionIdMap.set(version.id, copiedVersionId);
+          await insertVersion.run(
+            copiedVersionId,
+            forkedProjectId,
+            version.version_number,
+            version.prompt_snapshot,
+            version.status,
+            version.preview_url,
+            version.provider_meta,
+            version.source_version_id ? versionIdMap.get(version.source_version_id) ?? null : null,
+            version.attempt_number,
+            version.failure_code,
+            version.started_at,
+            version.completed_at,
+            version.created_at
+          );
+        }
+
+        const copiedCurrentVersionId = sourceProject.current_version_id
+          ? versionIdMap.get(sourceProject.current_version_id) ?? null
+          : null;
+        if (copiedCurrentVersionId) {
+          await updateForkCurrentVersion.run(copiedCurrentVersionId, now, forkedProjectId);
+        }
+
+        for (const message of sourceMessages) {
+          await insertMessage.run(
+            randomUUID(),
+            forkedProjectId,
+            message.version_id ? versionIdMap.get(message.version_id) ?? null : null,
+            message.role,
+            message.content,
+            message.created_at
+          );
+        }
+
+        await insertFork.run(
+          randomUUID(),
+          sourceProject.id,
+          forkedProjectId,
+          sourceProject.user_id,
+          sourceProject.session_id,
+          actor.userId,
+          actor.sessionId,
+          now
+        );
+      });
+    } catch {
+      await sendIdempotentResponse(500, {
+        error: {
+          code: "INTERNAL_ERROR",
+          message: "Could not fork project."
+        }
+      });
+      return;
+    }
+
+    await sendIdempotentResponse(201, {
+      projectId: forkedProjectId,
+      originalProjectId: sourceProject.id,
+      originalProjectTitle: sourceProject.title,
+      originalAuthorName: sourceProject.owner_name || sourceProject.owner_email || "Invitado"
+    });
+  }
+
+  return {
+    handleListLibraryProjects,
+    handleGetLibraryProject,
+    handleForkProject
   };
 }
 
@@ -1566,6 +2005,34 @@ function createGenerationServiceResolver({
   };
 }
 
+function mapPublicProject(row, { versions = undefined } = {}) {
+  const project = {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    visibility: row.visibility ?? "public",
+    ownerName: row.owner_name || row.owner_email || "Invitado",
+    currentVersionId: row.current_version_id,
+    currentVersionNumber: row.current_version_number ?? null,
+    currentPreviewUrl: extractPreviewUrl({
+      preview_url: row.current_preview_url,
+      provider_meta: row.current_provider_meta
+    }),
+    forkCount: row.fork_count ?? 0,
+    publishedAt: row.published_at,
+    updatedAt: row.updated_at,
+    createdAt: row.created_at,
+    originalProjectId: row.original_project_id ?? null,
+    originalProjectTitle: row.original_project_title ?? null,
+    originalAuthorName: row.original_author_name || row.original_author_email || null,
+    forkedAt: row.forked_at ?? null
+  };
+  if (versions) {
+    project.versions = versions;
+  }
+  return project;
+}
+
 function createV0IntegrationHandlers({
   sessionV0KeyStore,
   userV0KeyStore,
@@ -1859,6 +2326,7 @@ export function createApp({
   const handleListProjects = createListProjectsHandler(db, authService);
   const handleUpdateProject = createUpdateProjectHandler(db, authService);
   const handleDeleteProject = createDeleteProjectHandler(db, authService);
+  const libraryHandlers = createLibraryHandlers(db, idempotencyStore, authService);
   const defaultGenerationProvider = generationProvider ?? createMockV0Provider();
   const resolveGenerationService = createGenerationServiceResolver({
     sessionV0KeyStore,
@@ -1908,6 +2376,8 @@ export function createApp({
     const versionDetailMatch = /^\/projects\/([^/]+)\/versions\/(\d+)$/.exec(path);
     const versionExportMatch = /^\/projects\/([^/]+)\/versions\/(\d+)\/export$/.exec(path);
     const projectPreviewMatch = /^\/projects\/([^/]+)\/preview$/.exec(path);
+    const forkProjectMatch = /^\/projects\/([^/]+)\/fork$/.exec(path);
+    const libraryProjectMatch = /^\/library\/projects\/([^/]+)$/.exec(path);
     const projectMatch = /^\/projects\/([^/]+)$/.exec(path);
 
     if (request.method === "POST" && path === "/auth/register") {
@@ -1937,6 +2407,21 @@ export function createApp({
 
     if (request.method === "GET" && path === "/projects") {
       await handleListProjects(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && path === "/library/projects") {
+      await libraryHandlers.handleListLibraryProjects(request, response);
+      return;
+    }
+
+    if (request.method === "GET" && libraryProjectMatch) {
+      await libraryHandlers.handleGetLibraryProject(request, response, libraryProjectMatch[1]);
+      return;
+    }
+
+    if (request.method === "POST" && forkProjectMatch) {
+      await libraryHandlers.handleForkProject(request, response, forkProjectMatch[1], path);
       return;
     }
 

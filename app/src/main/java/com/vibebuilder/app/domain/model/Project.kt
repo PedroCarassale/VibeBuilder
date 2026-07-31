@@ -14,5 +14,16 @@ data class Project(
     val description: String,
     val createdAt: Instant,
     val updatedAt: Instant,
-    val currentVersionNumber: Int
+    val currentVersionNumber: Int,
+    val visibility: ProjectVisibility = ProjectVisibility.PRIVATE,
+    val originalProjectId: String? = null,
+    val originalProjectTitle: String? = null,
+    val originalAuthorName: String? = null,
+    val forkedAt: Instant? = null
 )
+
+enum class ProjectVisibility {
+    PRIVATE,
+    PUBLIC,
+    SHARED
+}

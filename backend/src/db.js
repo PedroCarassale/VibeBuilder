@@ -21,17 +21,22 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
       title TEXT NOT NULL,
       description TEXT,
       current_version_id TEXT,
+      visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('private', 'public', 'shared')),
+      published_at TEXT,
+      original_project_id TEXT,
+      original_author_user_id TEXT,
+      original_author_session_id TEXT,
+      forked_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       deleted_at TEXT,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (original_project_id) REFERENCES projects(id) ON DELETE SET NULL,
+      FOREIGN KEY (original_author_user_id) REFERENCES users(id) ON DELETE SET NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_projects_session_id
       ON projects (session_id);
-    CREATE INDEX IF NOT EXISTS idx_projects_user_id
-      ON projects (user_id);
-
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
@@ -100,6 +105,28 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
 
     CREATE INDEX IF NOT EXISTS idx_prompt_messages_project_id
       ON prompt_messages (project_id);
+
+    CREATE TABLE IF NOT EXISTS forks (
+      id TEXT PRIMARY KEY,
+      original_project_id TEXT NOT NULL,
+      forked_project_id TEXT NOT NULL UNIQUE,
+      original_author_user_id TEXT,
+      original_author_session_id TEXT,
+      new_owner_user_id TEXT,
+      new_owner_session_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (original_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (forked_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (original_author_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (new_owner_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_forks_original_project_id
+      ON forks (original_project_id);
+    CREATE INDEX IF NOT EXISTS idx_forks_new_owner_user_id
+      ON forks (new_owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_forks_new_owner_session_id
+      ON forks (new_owner_session_id);
 
     CREATE TABLE IF NOT EXISTS idempotency_requests (
       session_id TEXT NOT NULL,
@@ -291,6 +318,19 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
   if (!hasUserIdColumn) {
     db.exec("ALTER TABLE projects ADD COLUMN user_id TEXT;");
   }
+  const projectColumnAdditions = [
+    ["visibility", "ALTER TABLE projects ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private';"],
+    ["published_at", "ALTER TABLE projects ADD COLUMN published_at TEXT;"],
+    ["original_project_id", "ALTER TABLE projects ADD COLUMN original_project_id TEXT;"],
+    ["original_author_user_id", "ALTER TABLE projects ADD COLUMN original_author_user_id TEXT;"],
+    ["original_author_session_id", "ALTER TABLE projects ADD COLUMN original_author_session_id TEXT;"],
+    ["forked_at", "ALTER TABLE projects ADD COLUMN forked_at TEXT;"]
+  ];
+  for (const [columnName, sql] of projectColumnAdditions) {
+    if (!projectColumns.some((column) => column.name === columnName)) {
+      db.exec(sql);
+    }
+  }
 
   const userColumns = db.prepare("PRAGMA table_info(users);").all();
   const hasPasswordHashColumn = userColumns.some((column) => column.name === "password_hash");
@@ -307,6 +347,31 @@ export function createDatabase(dbPath = DEFAULT_DB_PATH) {
       WHERE deleted_at IS NULL AND user_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_projects_user_id
       ON projects (user_id);
+    CREATE INDEX IF NOT EXISTS idx_projects_public_updated
+      ON projects (updated_at DESC)
+      WHERE deleted_at IS NULL AND visibility IN ('public', 'shared');
+    CREATE INDEX IF NOT EXISTS idx_projects_original_project_id
+      ON projects (original_project_id);
+    CREATE TABLE IF NOT EXISTS forks (
+      id TEXT PRIMARY KEY,
+      original_project_id TEXT NOT NULL,
+      forked_project_id TEXT NOT NULL UNIQUE,
+      original_author_user_id TEXT,
+      original_author_session_id TEXT,
+      new_owner_user_id TEXT,
+      new_owner_session_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (original_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (forked_project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY (original_author_user_id) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (new_owner_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_forks_original_project_id
+      ON forks (original_project_id);
+    CREATE INDEX IF NOT EXISTS idx_forks_new_owner_user_id
+      ON forks (new_owner_user_id);
+    CREATE INDEX IF NOT EXISTS idx_forks_new_owner_session_id
+      ON forks (new_owner_session_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email
       ON users (email);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_project_versions_project_version_unique

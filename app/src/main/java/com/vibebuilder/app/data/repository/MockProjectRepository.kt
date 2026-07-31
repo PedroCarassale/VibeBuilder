@@ -1,8 +1,10 @@
 package com.vibebuilder.app.data.repository
 
 import com.vibebuilder.app.domain.model.Project
+import com.vibebuilder.app.domain.model.ProjectVisibility
 import com.vibebuilder.app.domain.model.ProjectVersion
 import com.vibebuilder.app.domain.model.PromptMessage
+import com.vibebuilder.app.domain.model.PublicProject
 import com.vibebuilder.app.domain.model.VersionStatus
 import com.vibebuilder.app.domain.repository.PreviewUnavailableReason
 import com.vibebuilder.app.domain.repository.PreviewUrlResolution
@@ -29,6 +31,7 @@ class MockProjectRepository : ProjectRepository {
     private val mutex = Mutex()
 
     private val projectsState = MutableStateFlow<List<Project>>(emptyList())
+    private val libraryProjectsState = MutableStateFlow<List<PublicProject>>(emptyList())
     private val versionsState = MutableStateFlow<Map<String, List<ProjectVersion>>>(emptyMap())
     private val messagesState = MutableStateFlow<Map<String, List<PromptMessage>>>(emptyMap())
 
@@ -39,8 +42,14 @@ class MockProjectRepository : ProjectRepository {
     override fun observeProjects(): Flow<List<Project>> =
         projectsState.asStateFlow().map { list -> list.sortedByDescending { it.updatedAt } }
 
+    override fun observeLibraryProjects(): Flow<List<PublicProject>> =
+        libraryProjectsState.asStateFlow().map { list -> list.sortedByDescending { it.publishedAt ?: it.updatedAt } }
+
     override fun observeProject(projectId: String): Flow<Project?> =
         projectsState.asStateFlow().map { list -> list.firstOrNull { it.id == projectId } }
+
+    override fun observeLibraryProject(projectId: String): Flow<PublicProject?> =
+        libraryProjectsState.asStateFlow().map { list -> list.firstOrNull { it.id == projectId } }
 
     override fun observeVersions(projectId: String): Flow<List<ProjectVersion>> =
         versionsState.asStateFlow().map { map ->
@@ -88,12 +97,60 @@ class MockProjectRepository : ProjectRepository {
         updated
     }
 
+    override suspend fun updateProjectVisibility(projectId: String, isPublic: Boolean): Project = mutex.withLock {
+        delay(SIMULATED_LATENCY_MS)
+        val existing = projectsState.value.firstOrNull { it.id == projectId }
+            ?: error("Project $projectId not found")
+        val updated = existing.copy(
+            visibility = if (isPublic) ProjectVisibility.PUBLIC else ProjectVisibility.PRIVATE,
+            updatedAt = Clock.System.now()
+        )
+        projectsState.value = projectsState.value.map { if (it.id == projectId) updated else it }
+        libraryProjectsState.value = if (isPublic) {
+            val publicProject = updated.toPublicProject(ownerName = "Tú", forkCount = 0)
+            listOf(publicProject) + libraryProjectsState.value.filterNot { it.id == projectId }
+        } else {
+            libraryProjectsState.value.filterNot { it.id == projectId }
+        }
+        updated
+    }
+
     override suspend fun deleteProject(projectId: String) = mutex.withLock {
         delay(SIMULATED_LATENCY_MS)
         if (projectsState.value.none { it.id == projectId }) error("Project $projectId not found")
         projectsState.value = projectsState.value.filterNot { it.id == projectId }
         versionsState.value = versionsState.value - projectId
         messagesState.value = messagesState.value - projectId
+        libraryProjectsState.value = libraryProjectsState.value.filterNot { it.id == projectId }
+    }
+
+    override suspend fun forkProject(projectId: String): Project = mutex.withLock {
+        delay(SIMULATED_LATENCY_MS)
+        val publicProject = libraryProjectsState.value.firstOrNull { it.id == projectId }
+            ?: error("Public project $projectId not found")
+        val now = Clock.System.now()
+        val forkedProjectId = UUID.randomUUID().toString()
+        val fork = Project(
+            id = forkedProjectId,
+            title = "Fork de ${publicProject.title}".take(100),
+            description = publicProject.description,
+            createdAt = now,
+            updatedAt = now,
+            currentVersionNumber = publicProject.currentVersionNumber,
+            originalProjectId = publicProject.id,
+            originalProjectTitle = publicProject.title,
+            originalAuthorName = publicProject.ownerName,
+            forkedAt = now
+        )
+        projectsState.value = projectsState.value + fork
+        versionsState.value = versionsState.value + (
+            forkedProjectId to publicProject.versions.map { it.copy(projectId = forkedProjectId) }
+        )
+        messagesState.value = messagesState.value + (forkedProjectId to emptyList())
+        libraryProjectsState.value = libraryProjectsState.value.map {
+            if (it.id == projectId) it.copy(forkCount = it.forkCount + 1) else it
+        }
+        fork
     }
 
     override suspend fun sendPrompt(projectId: String, prompt: String): ProjectVersion =
@@ -253,7 +310,27 @@ class MockProjectRepository : ProjectRepository {
                 assistantMessage(demo.id, defaultAssistantReply(1), now, versionNumber = 1)
             )
         )
+        libraryProjectsState.value = listOf(
+            demo.copy(visibility = ProjectVisibility.PUBLIC)
+                .toPublicProject(ownerName = "VibeBuilder", forkCount = 3)
+                .copy(versions = listOf(firstVersion))
+        )
     }
+
+    private fun Project.toPublicProject(ownerName: String, forkCount: Int): PublicProject = PublicProject(
+        id = id,
+        title = title,
+        description = description,
+        ownerName = ownerName,
+        currentVersionNumber = currentVersionNumber,
+        currentPreviewUrl = null,
+        forkCount = forkCount,
+        publishedAt = updatedAt,
+        updatedAt = updatedAt,
+        originalProjectId = originalProjectId,
+        originalProjectTitle = originalProjectTitle,
+        originalAuthorName = originalAuthorName
+    )
 
     private companion object {
         const val SIMULATED_LATENCY_MS = 600L

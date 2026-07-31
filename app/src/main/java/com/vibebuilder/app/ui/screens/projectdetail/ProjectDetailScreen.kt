@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.vibebuilder.app.R
+import com.vibebuilder.app.domain.model.ProjectVisibility
 import com.vibebuilder.app.ui.components.AppTopBar
 import com.vibebuilder.app.ui.components.ErrorView
 import com.vibebuilder.app.ui.components.ProjectDetailSkeleton
@@ -74,6 +75,7 @@ fun ProjectDetailScreen(
     val regenerationState by viewModel.regenerationState.collectAsStateWithLifecycle()
     val editState by viewModel.editProjectState.collectAsStateWithLifecycle()
     val deleteState by viewModel.deleteProjectState.collectAsStateWithLifecycle()
+    val visibilityActionState by viewModel.visibilityActionState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -123,6 +125,24 @@ fun ProjectDetailScreen(
                                 Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.project_actions_cd))
                             }
                             DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                                val project = (uiState as ProjectDetailUiState.Content).data.project
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            stringResource(
+                                                if (project.visibility == ProjectVisibility.PRIVATE) {
+                                                    R.string.project_publish_action
+                                                } else {
+                                                    R.string.project_unpublish_action
+                                                }
+                                            )
+                                        )
+                                    },
+                                    onClick = {
+                                        menuExpanded = false
+                                        viewModel.toggleProjectVisibility(project)
+                                    }
+                                )
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.project_edit_action)) },
                                     onClick = {
@@ -286,6 +306,19 @@ fun ProjectDetailScreen(
             dismissButton = {
                 TextButton(onClick = viewModel::dismissDeleteProject, enabled = !deleteState.isDeleting) {
                     Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    visibilityActionState.errorMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = viewModel::clearVisibilityFeedback,
+            title = { Text(stringResource(R.string.project_visibility_error_title)) },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = viewModel::clearVisibilityFeedback) {
+                    Text(stringResource(R.string.dismiss))
                 }
             }
         )

@@ -55,6 +55,9 @@
     <string name="project_detail_tab_history">Historial</string>
     <string name="project_actions_cd">Acciones del proyecto</string>
     <string name="project_edit_action">Editar proyecto</string>
+    <string name="project_publish_action">Publicar en biblioteca</string>
+    <string name="project_unpublish_action">Ocultar de biblioteca</string>
+    <string name="project_visibility_error_title">No se pudo cambiar la visibilidad</string>
     <string name="project_delete_action">Eliminar proyecto</string>
     <string name="project_edit_title">Editar proyecto</string>
     <string name="project_edit_save">Guardar</string>
@@ -136,6 +139,25 @@
     <string name="history_status_format">Estado: %1$s</string>
     <string name="history_regenerate">Regenerar</string>
     <string name="history_regenerating">Regenerando…</string>
+
+    <!-- Community library -->
+    <string name="library_title">Biblioteca</string>
+    <string name="library_header_title">Explora proyectos públicos</string>
+    <string name="library_header_subtitle">Abre ideas creadas por otros usuarios, mira su preview y crea tu propio fork para iterar.</string>
+    <string name="library_empty_title">No hay proyectos públicos</string>
+    <string name="library_empty_subtitle">Publica uno de tus proyectos desde el menú de acciones para empezar la biblioteca.</string>
+    <string name="library_search_label">Buscar en biblioteca</string>
+    <string name="library_no_matches_title">No hay coincidencias</string>
+    <string name="library_no_matches_subtitle">Prueba con otro nombre, descripción o autor.</string>
+    <string name="library_by_author">Por %1$s</string>
+    <string name="library_fork_count">%1$d forks</string>
+    <string name="library_detail_title">Proyecto público</string>
+    <string name="library_not_found">Proyecto público no encontrado: %1$s</string>
+    <string name="library_fork_action">Fork</string>
+    <string name="library_fork_error_title">No se pudo crear el fork</string>
+    <string name="library_versions_subtitle">Últimas versiones visibles del proyecto original.</string>
+    <string name="library_attribution">Fork de “%1$s” por %2$s</string>
+    <string name="library_unknown_author">autor original</string>
 
     <!-- v0 integration -->
     <string name="v0_settings_title">Integración v0</string>
